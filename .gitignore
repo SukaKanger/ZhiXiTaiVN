@@ -1,0 +1,39 @@
+# 构建中间产物
+build/
+dist/*.apk
+dist/*.idsig
+dist/*.zip
+!dist/.gitkeep
+*.keystore
+
+# 完全体离线资产：Termux(GPL)、54 deb、android.jar —— 不进仓库
+src/assets/offline/
+build/offline/
+*.deb
+termux.apk
+android.jar
+
+# 大二进制与第三方工具
+tools/pc/ffmpeg/
+tools/pc/jdk/
+dist/_termux.apk
+
+# 教程视频与素材（另行发布，不进源码仓库）
+build/video/
+build/video4/
+*.mp4
+*.srt
+*.wav
+docs/screens/*.mp4
+
+# 编辑器/系统噪声
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+.DS_Store
+
+# 密钥与本地配置
+*.env
+.env
+local.properties

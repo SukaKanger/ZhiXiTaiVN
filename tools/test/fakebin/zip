@@ -1,0 +1,7 @@
+#!/system/bin/sh
+
+last=""
+for a in "$@"; do last="$a"; done
+printf 'PK' >> "$last"
+echo "zip: appended -> $last"
+exit 0

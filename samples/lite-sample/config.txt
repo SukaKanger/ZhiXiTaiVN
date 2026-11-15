@@ -1,0 +1,6 @@
+Game_name:低配测试样本;
+Game_key:lite_sample;
+Title_img:lite_title.png;
+Enable_Appreciation:false;
+Enable_Continue:false;
+Enable_flowchart:false;

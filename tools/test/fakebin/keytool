@@ -1,0 +1,11 @@
+#!/system/bin/sh
+
+ks=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-keystore" ] && ks="$a"
+  prev="$a"
+done
+[ -n "$ks" ] || exit 1
+mkdir -p "$(dirname "$ks")"
+printf 'keystore\n' > "$ks"
+exit 0

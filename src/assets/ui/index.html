@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<!--
+  SPDX-License-Identifier: MIT
+  Copyright (c) 2026 WebGAL 移动工作站作者
+  工作站界面：进门就是工作台（左工程 / 中预览 / 右打包），横屏 20:9 优先。
+-->
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark" />
+<title>织戏台 · ZhiXiTai VN · 移动工作站</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body data-layout="right">
+
+<header class="hud">
+  <div class="hud__brand">
+    <span class="led" id="ledTermux" title="Termux 状态"></span>
+    <strong>织戏台</strong>
+    <span class="hud__sub">ZhiXiTai VN</span>
+    <span class="hud__ver mono" id="hudVersion">--</span>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button class="tab is-active" data-tab="workbench">工作台</button>
+    <button class="tab" data-tab="editor">剧本编辑</button>
+    <button class="tab" data-tab="log">终端</button>
+    <button class="tab" data-tab="env">环境</button>
+    <button class="tab" data-tab="about">关于</button>
+  </nav>
+  <div class="hud__tools">
+    <button class="chip chip--guide" id="btnGuide" title="新手引导：八步看清这个工作台">引导</button>
+    <button class="chip" id="btnLayout" title="打包台摆在哪边：右 / 左 / 中">打包台：右</button>
+    <button class="chip" id="btnTheme" title="主题：深色（黑白灰）/ 亮色（黑白蓝）">深色</button>
+  </div>
+  <div class="hud__meta mono">
+    <span id="hudEngine">4.6.4</span>
+    <i>/</i>
+    <span id="hudSdk">API --</span>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ==================== 工作台：三栏 ==================== -->
+  <section class="panel panel--wb is-active" id="tab-workbench">
+
+    <!-- 左：工程库 -->
+    <aside class="rail rail--left">
+      <div class="sec-head sec-head--tight">
+        <div>
+          <h2>工程库</h2>
+          <p class="sec-head__sub mono" id="projectCount">-- 个工程</p>
+        </div>
+        <button class="btn btn--sm" id="btnFoldRail" title="把工程库收成细条，点细条再展开">收起 ⏴</button>
+      </div>
+      <div class="row row--tight">
+        <button class="btn btn--primary btn--sm" id="btnNew">新建项目</button>
+        <button class="btn btn--sm" id="btnImport">导入文件夹</button>
+        <button class="btn btn--sm" id="btnImportZip">导入 ZIP</button>
+        <button class="btn btn--sm" id="btnRefresh">刷新</button>
+      </div>
+      <div class="cards cards--rail" id="projectList"></div>
+      <div class="note note--rail">
+        <p>选 WebGAL 工程根目录（含 <code>game/</code>），或直接选 <code>game</code>。
+           工作站会复制一份进自己的库，预览与打包都读这份副本。</p>
+      </div>
+    </aside>
+
+    <!-- 左栏也能拖 -->
+    <div class="split" id="splitterL" title="拖动调整工程库宽度"></div>
+
+    <!-- 中：预览舞台 -->
+    <section class="stage">
+      <div class="stage__bar">
+        <span class="mono stage__title" id="stageTitle">未载入工程</span>
+        <div class="row row--tight">
+          <button class="btn btn--sm" id="btnStageReload" disabled>重载</button>
+          <button class="btn btn--sm" id="btnStageFull" disabled>全屏</button>
+          <button class="btn btn--sm btn--danger" id="btnStageClose" disabled>关闭预览</button>
+        </div>
+      </div>
+      <div class="stage__frame">
+        <div class="stage__empty" id="stageEmpty">
+          <div class="stage__empty-inner">
+            <p class="mono dim">STAGE · 预览舞台</p>
+            <h3>左边挑一个工程，点「预览」</h3>
+            <p class="dim">引擎跑在这里的内嵌窗口里，不再把整个工作台跳成游戏画面。
+               要退出预览，点上面的「关闭预览」。</p>
+          </div>
+        </div>
+        <iframe id="stageFrame" class="stage__iframe" hidden
+                allow="autoplay; fullscreen" referrerpolicy="no-referrer"></iframe>
+      </div>
+    </section>
+
+    <!-- 拖这里改宽度 -->
+    <div class="split" id="splitter" title="拖动调整打包台宽度"></div>
+
+    <!-- 右：打包台 -->
+    <aside class="rail rail--right">
+      <div class="sec-head sec-head--tight">
+        <div>
+          <h2>打包台</h2>
+          <p class="sec-head__sub">在手机本机完成打包，工程和产物不上传电脑</p>
+        </div>
+        <span class="badge mono" id="badgeChannel">待命</span>
+        <button class="btn btn--sm" id="btnFoldDock" title="把打包台收成细条，点细条再展开">收起 ⏵</button>
+      </div>
+
+      <div class="field">
+        <label for="fProject">工程</label>
+        <select id="fProject"></select>
+      </div>
+
+      <div class="grid2">
+        <div class="field">
+          <label for="fAppName">应用名</label>
+          <input id="fAppName" type="text" autocomplete="off" placeholder="桌面上的名字" />
+        </div>
+        <div class="field">
+          <label for="fPkg">包名</label>
+          <input id="fPkg" type="text" class="mono" autocomplete="off" spellcheck="false" placeholder="com.example.mygame" />
+          <p class="hint" id="pkgRule">只能用小写字母、数字和点，开头必须是字母，两段之间不能空</p>
+          <p class="hint hint--bad" id="pkgError" hidden></p>
+        </div>
+        <div class="field">
+          <label for="fVersionName">版本名</label>
+          <input id="fVersionName" type="text" class="mono" autocomplete="off" placeholder="1.1.6" readonly />
+        </div>
+        <div class="field">
+          <label for="fVersionCode">版本号</label>
+          <input id="fVersionCode" type="number" class="mono" min="1" step="1" readonly />
+        </div>
+      </div>
+
+      <label class="switch" id="versionManualRow">
+        <input type="checkbox" id="fVersionManual" />
+        <span>手动覆盖版本号（手改后重复打包不会自动抬号）</span>
+      </label>
+
+      <div class="field">
+        <label for="fOrientation">游戏画面方向（产物 APK 锁定）</label>
+        <div class="seg" id="fOrientation">
+          <button data-v="landscape" class="is-on">横屏（视觉小说常用）</button>
+          <button data-v="portrait">竖屏</button>
+          <button data-v="auto">跟随系统</button>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="field">
+          <label>图标</label>
+          <div class="row row--tight row--mid">
+            <button class="btn btn--sm" id="btnIcon">选图片</button>
+            <span class="mono dim ellipsis" id="iconName">默认图标</span>
+          </div>
+        </div>
+        <div class="field">
+          <label>来路角标</label>
+          <label class="switch">
+            <input type="checkbox" id="fBadge" checked />
+            <span>启动显示 3 秒来路</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- 签名：玩家自己测 -->
+      <div class="field field--box">
+        <label>签名方式</label>
+        <div class="seg seg--3" id="fSignMode">
+          <button data-v="debug" class="is-on">内置调试</button>
+          <button data-v="custom">我的 keystore</button>
+          <button data-v="new">新建 keystore</button>
+        </div>
+        <p class="hint" id="signHint">调试签名能装能测，不能上架。要发布就切到「我的 keystore」或「新建」。</p>
+
+        <div class="sign-extra" id="signExtra" hidden>
+          <div class="row row--tight row--mid">
+            <button class="btn btn--sm" id="btnKs">选 keystore</button>
+            <span class="mono dim ellipsis" id="ksName">未选择</span>
+          </div>
+          <div class="grid3">
+            <div class="field">
+              <label for="fKsAlias">别名</label>
+              <input id="fKsAlias" type="text" class="mono" value="webgal" />
+            </div>
+            <div class="field">
+              <label for="fKsStorePass">库口令</label>
+              <input id="fKsStorePass" type="password" class="mono" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label for="fKsKeyPass">密钥口令</label>
+              <input id="fKsKeyPass" type="password" class="mono" autocomplete="off" placeholder="同库口令" />
+            </div>
+          </div>
+          <p class="hint hint--warn" id="ksPassHint">口令留空将使用默认口令 android，仅限自测；要发布请务必填写自己的口令并备份好。</p>
+          <div class="field" id="ksNewPathBox" hidden>
+            <label>密钥将生成到</label>
+            <div class="row row--tight row--mid">
+              <span class="mono dim ellipsis" id="ksNewPath">—</span>
+              <button class="btn btn--sm" id="btnCopyKsPath">复制路径</button>
+            </div>
+          </div>
+          <p class="hint" id="ksHint">「新建」模式会在手机本机生成一份属于你的 keystore，之后一直复用它。</p>
+        </div>
+      </div>
+
+      <div class="row">
+        <button class="btn btn--help" id="btnParamHelp" title="看不懂的参数点这里">?</button>
+        <button class="btn btn--primary" id="btnPrepare">生成构建工程</button>
+        <button class="btn btn--amber" id="btnBuild" disabled>开始构建</button>
+      </div>
+      <p class="hint" id="buildHint">先点上面『生成构建工程』，按钮点亮后才能开始构建。</p>
+
+      <div class="prog"><div class="prog__bar" id="progBar"></div></div>
+      <div class="prog__text mono" id="progText">待命 · 还没拼装任何东西</div>
+
+      <div class="result" id="resultCard" hidden>
+        <div class="result__head">
+          <span class="badge" id="resultState">idle</span>
+          <span class="mono dim" id="resultSize"></span>
+        </div>
+        <div class="result__path mono" id="resultPath"></div>
+        <div class="row row--tight">
+          <button class="btn btn--primary btn--sm" id="btnInstall" hidden>安装到本机</button>
+          <button class="btn btn--sm" id="btnCopyApkPath">复制 APK 路径</button>
+          <button class="btn btn--sm" id="btnExport">打包工程 zip 存到本机</button>
+          <button class="btn btn--sm" id="btnCopyCmd">复制命令</button>
+          <button class="btn btn--sm" id="btnWakeTermux">打开 Termux</button>
+        </div>
+        <p class="hint" id="resultHint"></p>
+      </div>
+    </aside>
+
+  </section>
+
+  <!-- ==================== 工作场景（编辑器） ==================== -->
+  <section class="panel panel--ed" id="tab-editor">
+
+    <aside class="rail rail--left rail--ed">
+      <div class="sec-head sec-head--tight">
+        <div>
+          <h2>剧本编辑</h2>
+          <p class="sec-head__sub mono" id="edProjectName">未选工程</p>
+        </div>
+      </div>
+      <div class="row row--tight">
+        <button class="btn btn--primary btn--sm" id="edNewScene">新建场景</button>
+        <button class="btn btn--sm" id="edRefresh">刷新</button>
+      </div>
+      <div class="row row--tight">
+        <select id="edAssetCat" title="素材要放进哪个目录">
+          <option value="background">背景</option>
+          <option value="figure">立绘</option>
+          <option value="bgm">音乐</option>
+          <option value="vocal">语音</option>
+          <option value="video">视频</option>
+          <option value="animation">动画</option>
+          <option value="other">其他</option>
+        </select>
+        <button class="btn btn--sm btn--amber" id="edImportAssets">导入素材</button>
+      </div>
+      <div class="scene-list" id="edScenes"></div>
+      <div class="ed-assets" id="edAssets"></div>
+      <p class="hint">点文件名复制；点旁边的 ✎ 改名（扩展名不变，直接改工程里的文件）。</p>
+    </aside>
+
+    <section class="ed-main">
+      <div class="ed-bar">
+        <span class="mono ed-file" id="edFile">scene/start.txt</span>
+        <span class="ed-dirty" id="edDirty" hidden title="有未保存的改动">●</span>
+        <div class="row row--tight">
+          <button class="btn btn--sm" id="edSave">保存</button>
+          <button class="btn btn--sm btn--amber" id="edPreview">预览</button>
+          <button class="btn btn--sm btn--danger" id="edDelete">删除场景</button>
+        </div>
+      </div>
+      <div class="ed-stage">
+        <textarea class="ed-text mono" id="edText" spellcheck="false"
+                  placeholder="旁白:从这里开始写你的剧本。;"></textarea>
+        <div class="ed-mask" id="edMask" hidden>
+          <div class="ed-mask__inner">
+            <p>先回工作台选一个工程，再回来写剧本。</p>
+            <button class="btn btn--primary" id="edGoWb">去工作台选工程</button>
+          </div>
+        </div>
+      </div>
+      <div class="ed-foot">
+        <div class="ed-cmds" id="edCmds">
+          <button data-cmd="旁白:">旁白</button>
+          <button data-cmd="角色名:">角色台词</button>
+          <button data-cmd="changeBg:">换背景</button>
+          <button data-cmd="changeScene:">跳场景</button>
+          <button data-cmd="bgm:">音乐</button>
+          <button data-cmd="figure:">立绘</button>
+          <button data-cmd="setVar:">变量</button>
+        </div>
+        <p class="hint" id="edHint">脚本存 <code>game/scene/*.txt</code>，语法沿用 WebGAL；改完点保存，预览立刻生效。</p>
+      </div>
+    </section>
+
+  </section>
+
+  <!-- ==================== 终端 ==================== -->
+  <section class="panel" id="tab-log">
+    <div class="sec-head">
+      <div>
+        <h2>构建终端</h2>
+        <p class="sec-head__sub mono" id="logBuildId">没有进行中的构建</p>
+      </div>
+      <div class="row row--tight">
+        <button class="btn" id="btnLogRefresh">刷新</button>
+        <button class="btn" id="btnLogCopy">复制</button>
+      </div>
+    </div>
+    <pre class="term mono" id="logView">（空）</pre>
+    <p class="hint">这里显示打包的实时输出，每 1.2 秒刷新一次最新内容；原始日志文件保存在本机构建目录里。</p>
+  </section>
+
+  <!-- ==================== 环境 ==================== -->
+  <section class="panel" id="tab-env">
+    <div class="sec-head">
+      <div>
+        <h2>环境自检</h2>
+        <p class="sec-head__sub">文件权限、打包工具、Termux 就位状态</p>
+      </div>
+    </div>
+
+    <div class="verdict" id="envVerdict" hidden></div>
+
+    <table class="kv mono" id="envTable"></table>
+
+    <div class="note" id="offlineBox" hidden>
+      <h3>离线工具链（完全体）</h3>
+      <p id="offlineState">这一版不含离线包。</p>
+      <p class="hint">Termux、OpenJDK、aapt2、d8、apksigner 全在 APK 里，不联网。点「一键离线配齐」会释放工具包并自动打开 Termux，粘贴一次命令就跑完，不用 pkg、不用 VPN。</p>
+      <div class="row row--tight">
+        <button class="btn btn--sm btn--primary" id="btnOfflineDrop">一键离线配齐（不联网）</button>
+        <button class="btn btn--sm" id="btnOfflineCmd">复制安装命令</button>
+        <button class="btn btn--sm" id="btnOfflineOpen">打开 Termux</button>
+      </div>
+    </div>
+
+    <details class="adv" id="envAdvanced" hidden>
+      <summary>高级路径详情 ›</summary>
+      <table class="kv mono" id="envAdvTable"></table>
+    </details>
+
+    <div class="field field--box">
+      <label for="fLayoutSeg">打包台摆在哪边</label>
+      <div class="seg seg--3" id="fLayoutSeg">
+        <button data-v="right" class="is-on">居右</button>
+        <button data-v="left">居左</button>
+        <button data-v="center">居中</button>
+      </div>
+      <label for="fThemeSeg">主题</label>
+      <div class="seg" id="fThemeSeg">
+        <button data-v="dark" class="is-on">深色 黑白灰</button>
+        <button data-v="light">亮色 黑白蓝</button>
+      </div>
+      <p class="hint">打包台左边那条竖缝能直接拖，拖完的宽度会记住；顶栏小胶囊也能切换。</p>
+    </div>
+
+    <ol class="env-steps">
+      <li class="env-step" id="stepFiles">
+        <div class="env-step__head">
+          <b>① 所有文件访问权限</b>
+          <span class="ob-state" id="stepFilesState">检查中…</span>
+          <div class="row row--tight">
+            <button class="btn btn--sm" id="btnAllFiles">去系统里授权</button>
+          </div>
+        </div>
+        <p class="hint">没这个权限，工程和产物只能落在应用私有目录：你自己翻不到，打包工具也读不到。</p>
+      </li>
+      <li class="env-step" id="stepKit">
+        <div class="env-step__head">
+          <b>② 装好打包脚本与 Termux</b>
+          <span class="ob-state" id="stepKitState">检查中…</span>
+          <div class="row row--tight">
+            <button class="btn btn--sm" id="btnTermuxInstall" hidden>装本机 Termux</button>
+            <button class="btn btn--sm" id="btnDeploy">复制环境安装命令</button>
+            <button class="btn btn--sm" id="btnTermux">打开 Termux</button>
+          </div>
+        </div>
+        <p class="hint">先把安装命令复制到 Termux 粘贴回车；Termux 被系统冻住时，点「打开 Termux」把它拉到前台。</p>
+      </li>
+      <li class="env-step" id="stepProbe">
+        <div class="env-step__head">
+          <b>③ 运行自检</b>
+          <span class="ob-state" id="stepProbeState">未运行</span>
+          <div class="row row--tight">
+            <button class="btn btn--sm btn--primary" id="btnProbe">运行自检</button>
+          </div>
+        </div>
+        <p class="hint">跑完看顶部总判决：全绿就能在手机本机打包。</p>
+      </li>
+    </ol>
+
+    <div class="note">
+      <h3>三步把环境装好（只做一次）</h3>
+      <ol>
+        <li>给「所有文件访问」权限。</li>
+        <li>复制环境安装命令，切到 Termux 粘贴并按回车，把打包工具装好。</li>
+        <li>回来点「运行自检」，全绿就能打包。别把 Termux 丢后台——国产 ROM 会冻它。</li>
+      </ol>
+    </div>
+
+    <div class="note note--warn">
+      <h3>自检红了怎么办</h3>
+      <div class="fault">
+        <p><b>aapt2 跑不起来 / curl 报符号缺失</b>：Termux 里装一下 libc++ 和 openssl，再重跑自检。</p>
+        <div class="row row--tight">
+          <button class="btn btn--sm" data-repair="apt install -y libc++ openssl">复制修复命令</button>
+        </div>
+      </div>
+      <div class="fault">
+        <p><b>android.jar 不在</b>：把 android.jar 放到 <code>~/.webgal-station/android.jar</code>，或在 Termux 里联网重跑环境安装命令。</p>
+        <div class="row row--tight">
+          <button class="btn btn--sm" data-repair-setup>复制环境安装命令</button>
+        </div>
+      </div>
+      <div class="fault">
+        <p><b>构建卡在 javac 不动</b>：Termux 被系统冻了。把 Termux 打开放前台，或在工作站里关掉电池优化/后台限制后再点开始构建。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 不会就问：右下浮窗 ==================== -->
+  <aside class="askdock" id="askDock" hidden>
+    <div class="askdock__head">
+      <strong class="askdock__title">不会就问</strong>
+      <span class="hint" id="aiState">没配过就是空的</span>
+      <button class="btn btn--sm" id="btnAiFold">收起</button>
+    </div>
+
+    <div class="ask-cfg">
+      <div class="field">
+        <label for="fAiBase">接口地址（OpenAI 兼容的 /v1 根）</label>
+        <input id="fAiBase" type="text" class="mono" autocomplete="off" spellcheck="false"
+               placeholder="https://api.example.com/v1" />
+      </div>
+      <div class="row row--tight">
+        <div class="field field--grow">
+          <label for="fAiModel">模型名</label>
+          <input id="fAiModel" type="text" class="mono" autocomplete="off" spellcheck="false"
+                 placeholder="deepseek-chat / gpt-4o-mini …" />
+        </div>
+        <div class="field field--grow">
+          <label for="fAiKey">Key</label>
+          <input id="fAiKey" type="password" class="mono" autocomplete="off" spellcheck="false"
+                 placeholder="sk-…" />
+        </div>
+      </div>
+      <div class="row row--tight">
+        <button class="btn btn--sm btn--primary" id="btnAiSave">保存到本机</button>
+        <button class="btn btn--sm" id="btnAiClear">清空配置</button>
+      </div>
+      <p class="hint">
+        只放行 https；本机回环（127.0.0.1 / localhost）例外，可以用 http。
+        Key 只写进本机偏好，不进日志、不进构建产物、不随工程导出。
+      </p>
+    </div>
+
+    <div class="ask-box">
+      <label for="fAiQ">你的问题</label>
+      <textarea id="fAiQ" rows="3" placeholder="比如：包名填错了会怎样？签名用调试的能上架吗？"></textarea>
+      <div class="row row--tight">
+        <button class="btn btn--primary" id="btnAiAsk">问一下</button>
+        <span class="hint" id="aiTip">答案来自你配的模型 · AI 生成可能有误，注意核实</span>
+      </div>
+    </div>
+
+    <div class="ask-ans" id="aiAnswer" hidden>
+      <div class="ask-ans__head">
+        <span class="mono" id="aiAnswerHead">回答</span>
+        <span class="ask-ans__warn">AI 生成可能有误，注意核实</span>
+      </div>
+      <div class="ask-ans__body" id="aiAnswerBody"></div>
+    </div>
+  </aside>
+
+  <button class="askfab" id="askFab" title="不会就问：点开是浮窗，再点收起">问</button>
+<!-- ==================== 关于 ==================== -->
+  <section class="panel" id="tab-about">
+    <div class="sec-head">
+      <div>
+        <h2>关于与来路</h2>
+        <p class="sec-head__sub">分层许可 · 组件级对应 · 详细免责</p>
+      </div>
+    </div>
+
+    <div class="lic">
+      <div class="lic__row lic__row--head">
+        <span>层</span><span>组件</span><span>许可</span>
+      </div>
+      <div class="lic__row">
+        <span class="lic__layer">引擎</span>
+        <span>WebGAL 4.6.4<em>assets/engine · 原样随附</em></span>
+        <span class="tag tag--mpl">MPL-2.0</span>
+      </div>
+      <div class="lic__row">
+        <span class="lic__layer">工具</span>
+        <span>Termux / BuildAPKs<em>独立进程 · 命令行调用</em></span>
+        <span class="tag tag--gpl">GPL-3.0</span>
+      </div>
+      <div class="lic__row">
+        <span class="lic__layer">工具</span>
+        <span>aapt2 / d8 / apksigner<em>AOSP build-tools</em></span>
+        <span class="tag tag--apache">Apache-2.0</span>
+      </div>
+      <div class="lic__row">
+        <span class="lic__layer">原创</span>
+        <span>本工作站代码与界面<em>文件头带 SPDX</em></span>
+        <span class="tag tag--mit">MIT</span>
+      </div>
+    </div>
+
+    <div class="note">
+      <h3>边界说明（合规要点）</h3>
+      <p><b>引擎</b>：原样随附，只删了 <code>*.gz</code> 预压缩副本；源码见上游仓库。</p>
+      <p><b>GPL 工具</b>：不随附、不链接、不合并，只由 Termux 以独立进程执行命令行——
+          属 GPLv3 意义上的聚合，不传染你的作品。APK 内没有任何 GPL 二进制。</p>
+      <p><b>原创代码</b>：每个文件头带 <code>SPDX-License-Identifier: MIT</code>，MIT 文件里没掺 MPL 代码。</p>
+    </div>
+
+    <div class="note">
+      <h3>作者与教程 · 玩家须知</h3>
+      <p>源码仓库：<code>github.com/SukaKanger</code> —— 用着不对、想提 issue、想自己改，都从这里进。</p>
+      <p>视频教程：安装 / 收起两栏 / 八步引导 / 自带 API / 端上打包，五期走完，全部挂在 GitHub。</p>
+      <p><b>主页</b>：<code>https://github.com/SukaKanger</code> —— 版本更新、踩坑记录、样本包都挂在主页置顶，详情看主页，别在评论区问已经写过的。</p>
+      <p><b>支持作者</b>：<code>https://afdian.com/a/RoryMarshall</code> —— 纯自愿，不影响任何功能，白嫖也照用。</p>
+    </div>
+
+    <div class="row row--tight">
+      <button class="btn btn--primary" data-url="https://github.com/SukaKanger">作者 GitHub</button>
+      <button class="btn" data-url="https://afdian.com/a/RoryMarshall">爱发电 · 支持作者</button>
+    </div>
+
+    <div class="row row--tight">
+      <button class="btn btn--primary" id="btnDisc">使用须知 · 免责声明</button>
+      <button class="btn" id="btnNotice">NOTICE 全文</button>
+    </div>
+    <div class="row row--tight">
+      <button class="btn" id="btnMpl">MPL-2.0 全文</button>
+      <button class="btn" id="btnMit">MIT 全文</button>
+      <button class="btn" data-url="https://github.com/OpenWebGAL/WebGAL">上游仓库</button>
+      <button class="btn" data-url="https://openwebgal.com">官网</button>
+    </div>
+
+    <pre class="legal-view mono" id="legalView" hidden></pre>
+
+    <p class="hint" id="aboutVersion"></p>
+  </section>
+
+</main>
+
+<div class="toast" id="toast" hidden>
+  <span id="toastMsg"></span>
+  <button class="btn btn--sm" id="toastAction" hidden></button>
+</div>
+
+<!-- 新建 / 删除场景（应用内自绘弹窗） -->
+<div class="dlg" id="sceneDlg" hidden>
+  <div class="dlg__box">
+    <div class="dlg__head">
+      <h3 id="sceneDlgTitle">新建场景</h3>
+    </div>
+    <div class="field">
+      <label for="sceneNameInput">场景文件名（不用带 .txt）</label>
+      <input id="sceneNameInput" type="text" autocomplete="off" />
+    </div>
+    <p class="hint hint--bad" id="sceneNameError" hidden></p>
+    <p class="hint" id="sceneDeleteWarn" hidden></p>
+    <div class="dlg__actions">
+      <button class="btn" id="sceneCancel">取消</button>
+      <button class="btn btn--primary" id="sceneOk">创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- 素材选择列表（插入背景 / 音乐 / 立绘指令时弹出） -->
+<div class="dlg" id="assetPickDlg" hidden>
+  <div class="dlg__box">
+    <div class="dlg__head">
+      <h3 id="assetPickTitle">选择素材</h3>
+    </div>
+    <div class="asset-list" id="assetPickList"></div>
+    <div class="dlg__actions">
+      <button class="btn" id="assetPickCancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- 打包参数说明：左下角问号点开 -->
+<div class="dlg" id="paramHelpDlg" hidden>
+  <div class="dlg__box dlg__box--wide">
+    <div class="dlg__head">
+      <h3>打包参数都是啥？</h3>
+    </div>
+    <div class="help-list">
+      <p><b>应用名</b>：装到手机桌面后显示的名字。中文、空格、emoji 都能用，别超过 20 个字。</p>
+      <p><b>包名</b>：安卓给每个 App 的唯一身份证，格式像 <span class="mono">com.你的名字.游戏名</span>。只能小写字母、数字、点，开头必须是字母。同一个包名不能装两份，改包名相当于另一个 App。</p>
+      <p><b>版本名</b>：给玩家看的版本，比如 <span class="mono">1.1.6</span> 或 <span class="mono">1.1.7-beta</span>。随便起，但别乱跳。</p>
+      <p><b>版本号</b>：安卓用来判断“新旧”的整数，只能往上加。装新版时系统只认它，不认版本名。重复打包会自动 +1；手改后记得别再改回去。</p>
+      <p><b>游戏画面方向</b>：锁死产物 APK 打开时的方向。视觉小说一般横屏；竖屏适合手机单手握；跟随系统让玩家自己转。</p>
+      <p><b>图标</b>：桌面图标，选 PNG 最稳，别用带透明边的大图。不选就用默认图标。</p>
+      <p><b>来路角标</b>：打开游戏先显示 3 秒“由织戏台打包”，方便玩家知道哪来的。不想露就别勾。</p>
+      <p><b>签名方式</b>：调试签名能装能测，不能上架应用商店；「我的 keystore」用你已有的密钥；「新建 keystore」在本机生成一份属于你的，生成后备份好，以后一直用它，丢了就不能覆盖升级。</p>
+      <p><b>库口令 / 密钥口令</b>：打开 keystore 的密码。留空会落到默认 <span class="mono">android</span>，只适合自测；要发布必须填自己的并备份。</p>
+      <p><b>生成构建工程</b>：把工程、引擎、图标、签名参数拼到手机里的构建目录，不联网。</p>
+      <p><b>开始构建</b>：让 Termux 在本机真正打 APK。第一次要先把离线工具链配好；打完会在下方给出 APK 的完整路径。</p>
+    </div>
+    <div class="dlg__actions">
+      <button class="btn btn--primary" id="paramHelpClose">知道了</button>
+    </div>
+  </div>
+</div>
+
+<!-- 通用确认弹窗 -->
+<div class="dlg" id="confirmDlg" hidden>
+  <div class="dlg__box">
+    <div class="dlg__head">
+      <h3 id="confirmTitle">提示</h3>
+    </div>
+    <p class="confirm-msg" id="confirmMsg"></p>
+    <div class="dlg__actions">
+      <button class="btn" id="confirmNo">稍后再说</button>
+      <button class="btn btn--primary" id="confirmYes">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- 新建项目 -->
+<div class="dlg" id="newDlg" hidden>
+  <div class="dlg__box">
+    <div class="dlg__head">
+      <h3>新建 WebGAL 工程</h3>
+      <div class="row row--tight">
+        <button class="btn btn--sm" id="newCancel2">取消</button>
+        <button class="btn btn--primary btn--sm" id="newOk2">创建</button>
+      </div>
+    </div>
+    <div class="field">
+      <label for="newName">工程名</label>
+      <input id="newName" type="text" autocomplete="off" placeholder="我的第一部视觉小说" />
+    </div>
+    <div class="field">
+      <label for="newStarter">第一句台词（可留空）</label>
+      <input id="newStarter" type="text" autocomplete="off" placeholder="这里写开场白，不用带「旁白:」" />
+    </div>
+    <p class="hint">会建出 <code>game/config.txt</code>、<code>game/scene/start.txt</code> 和
+       background / bgm / figure / animation 目录，建完能直接预览、打包。
+       建好后进顶栏「剧本编辑」改第一句台词。</p>
+    <div class="dlg__actions">
+      <button class="btn" id="newCancel">取消</button>
+      <button class="btn btn--primary" id="newOk">创建并预览</button>
+    </div>
+  </div>
+</div>
+
+<!-- 首次启动免责确认 -->
+<div class="gate" id="gate" hidden>
+  <div class="gate__box">
+    <div class="gate__brand mono">FIRST RUN · 使用前须知</div>
+    <h2>先看清来路，再动手</h2>
+    <p>你的剧本、美术、音乐，授权归你；工程和产物都留在本机，不上传电脑；调试签名只能自己测试，不能用来上架。
+       这是第三方工具，不是 WebGAL 官方版本，与上游无隶属、无背书关系。</p>
+    <p class="hint">各组件的许可证分层说明，见顶栏「关于」页。</p>
+    <ul>
+      <li><b>你的内容你负责</b>：剧本、美术、音乐、字体、配音、角色形象的授权与合法性，全在你身上。</li>
+      <li><b>你的产物你负责</b>：分发时保留来路说明文件，别把引擎说成官方版；侵权、违规、被投诉，与本工具无关。</li>
+      <li><b>工具按现状给</b>：不担保构建一定成功、产物一定能装能跑，数据风险自负。</li>
+      <li><b>密钥自己管</b>：调试签名只能自测，上架请用你自己的签名文件并备份好。</li>
+      <li><b>本地处理</b>：工程与产物都留在本机，不上传。</li>
+    </ul>
+    <div class="gate__detail-actions" id="gateDetailActions" hidden>
+      <button class="btn btn--sm" id="btnGateCollapse">收起声明</button>
+    </div>
+    <div class="gate__actions">
+      <button class="btn" id="btnGateDetail">读完整免责声明</button>
+      <button class="btn btn--primary" id="btnGateOk">我已阅读并同意</button>
+    </div>
+  </div>
+</div>
+
+<!-- 首启环境体检：缺权限/缺 Termux 就在这儿补齐，别到打包时才撞墙 -->
+<div class="gate gate--ob" id="onboard" hidden>
+  <div class="gate__box">
+    <div class="gate__brand mono">首启 · 环境体检</div>
+    <h2>做游戏要三样东西，缺一样也能写，就是打不出包</h2>
+    <p>这里不是要你「同意一堆权限」，是三条具体的路：文件能读写、Termux 能跑编译、打包工具就位。
+       每一条点一下就能补，补完状态自己变绿。</p>
+
+    <ol class="ob-list">
+      <li class="ob-item" id="obFilesItem">
+        <div class="ob-item__head">
+          <b>① 所有文件访问权限</b>
+          <span class="ob-state" id="obFilesState">检查中…</span>
+          <div class="row row--tight">
+            <button class="btn btn--sm btn--primary" id="obFiles">去系统里授权</button>
+          </div>
+        </div>
+        <p class="hint">没这个权限，工程和产物只能落在应用私有目录：你自己翻不到，Termux 也读不到，
+           打包链路直接断在这儿。授权页里找「允许访问所有文件」那个开关。</p>
+      </li>
+
+      <li class="ob-item" id="obTermuxItem">
+        <div class="ob-item__head">
+          <b>② Termux（跑打包命令的翻译壳）</b>
+          <span class="ob-state" id="obTermuxState">检查中…</span>
+          <div class="row row--tight">
+            <button class="btn btn--sm" id="obTermux">本机安装包</button>
+            <button class="btn btn--sm" id="obTermuxFdroid">去 F-Droid 下载</button>
+            <button class="btn btn--sm" id="obTermuxOpen" hidden>打开 Termux</button>
+          </div>
+        </div>
+        <p class="hint">Termux 是在手机上替你跑打包命令的翻译壳，不会进你的游戏。
+           <span id="obTermuxHint"></span></p>
+      </li>
+
+      <li class="ob-item" id="obKitItem">
+        <div class="ob-item__head">
+          <b>③ 打包工具就位</b>
+          <span class="ob-state" id="obKitState">检查中…</span>
+          <div class="row row--tight">
+            <button class="btn btn--sm" id="obKit">复制环境安装命令（去 Termux 粘贴）</button>
+            <button class="btn btn--sm" id="obKitCopy" hidden>再复制一次命令</button>
+          </div>
+        </div>
+        <p class="hint">① 点按钮复制命令；② 切到 Termux 粘贴并按回车；③ 回到本工作站点「运行自检」。</p>
+      </li>
+    </ol>
+
+    <div class="gate__actions">
+      <button class="btn" id="obSkip">先跳过，我只写不打</button>
+      <button class="btn btn--primary" id="obOk">进工作台</button>
+    </div>
+    <p class="ob-note">随时可以在「环境」页回来补；跳过不影响写剧本和预览。</p>
+  </div>
+</div>
+
+<!-- 启动页：像 PS 那样先挑项目（选项目 / 新建 / 导入） -->
+<div class="boot" id="bootPick" hidden>
+  <div class="boot__card">
+    <div class="boot__brand">
+      <span class="led"></span>
+      <strong>织戏台</strong>
+      <span class="boot__sub">移动工作站</span>
+    </div>
+    <p class="hint">先挑一个项目；要新的就新建，别人的包就导入。</p>
+    <div class="boot__list" id="bootList"></div>
+    <div class="row row--tight">
+      <button class="btn btn--primary" id="bootNew">新建项目</button>
+      <button class="btn" id="bootImport">导入工程</button>
+      <button class="btn" id="bootSkip">直接进工作台</button>
+    </div>
+    <label class="checkline"><input type="checkbox" id="bootNoAsk" /> 下次启动直接进工作台</label>
+  </div>
+</div>
+<!-- 新手引导：八步，首启自动开，顶栏「引导」可随时重看 -->
+<div class="guide" id="guide" hidden>
+  <div class="guide__spot" id="guideSpot"></div>
+  <div class="guide__card" id="guideCard">
+    <div class="guide__brand mono"><span id="guideStep">1 / 8</span> · 新手引导</div>
+    <h3 id="guideTitle">工程库</h3>
+    <p id="guideText">这里放你的工程。</p>
+    <div class="guide__actions">
+      <button class="btn btn--sm" id="guideSkip">不看了</button>
+      <button class="btn btn--sm" id="guidePrev">上一步</button>
+      <button class="btn btn--sm btn--primary" id="guideNext">下一步</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script></body>
+</html>

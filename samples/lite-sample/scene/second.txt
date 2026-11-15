@@ -1,0 +1,6 @@
+setVar:files=3 个剧本文件;
+setVar:images=2 张自绘背景;
+:整个工程就是 {files} + {images}。;
+:没有配音、没有立绘、没有 13 MB 的中文字体依赖。;
+:体积可以忽略，但打包链路一步不少：本地 HTTP 服务、引擎、aapt2、javac、d8、签名。;
+choose:回到开头:start.txt|结束:end.txt;

@@ -1,0 +1,15 @@
+WebGAL 4.6.4 · Mozilla Public License 2.0
+========================================
+
+本目录（src/assets/engine/）是 WebGAL 引擎 4.6.4 的发行构建，版权归
+OpenWebGAL 及其贡献者，以 Mozilla Public License 2.0 授权。
+
+许可证全文见仓库根目录：LICENSES/MPL-2.0.txt
+上游源码：https://github.com/OpenWebGAL/WebGAL
+项目主页：https://openwebgal.com
+
+本项目未修改引擎源码，仅剔除了与源文件内容重复的 `*.gz` 预压缩副本。
+若你需要 MPL 覆盖文件的源码，请使用上游同版本（4.6.4）仓库。
+
+本文件不是许可证正文，只作为分发时的来源与许可提示；
+以 LICENSES/MPL-2.0.txt 为准。

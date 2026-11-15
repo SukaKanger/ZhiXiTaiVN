@@ -1,0 +1,11 @@
+changeBg:bg.webp -next;
+:端上打包的链路是这样的。;
+:intro:第一步|导入工程;
+:你选一个文件夹，工作站把它复制进自己的工程库，顺手算出体积和场景数。;
+:intro:第二步|生成构建工程;
+:AndroidManifest、图标、Activity、引擎副本、工程资源，一次性拼装到 Download/WebGALStation/build 里。;
+:intro:第三步|Termux 接手;
+:aapt2 打资源包，javac 编译，d8 出 dex，zipalign 对齐，apksigner 签名。;
+:产物落在 Download/WebGALStation/out，点一下就能装到这台手机上。;
+:整套链路离线可跑，不需要云端编译农场，也不用把工程传到别人服务器上。;
+choose:回到开头:start.txt|收工:end_scene.txt;

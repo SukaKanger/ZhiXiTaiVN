@@ -1,0 +1,12 @@
+#!/system/bin/sh
+
+[ "$1" = "verify" ] && exit 0
+out=""; prev=""; last=""
+for a in "$@"; do
+  [ "$prev" = "--out" ] && out="$a"
+  prev="$a"; last="$a"
+done
+cp "$last" "$out" 2>/dev/null || : > "$out"
+printf '\nsigned\n' >> "$out"
+echo "apksigner: signed -> $out"
+exit 0

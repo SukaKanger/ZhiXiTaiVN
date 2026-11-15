@@ -1,0 +1,10 @@
+#!/system/bin/sh
+
+out=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-o" ] && out="$a"
+  prev="$a"
+done
+[ -n "$out" ] || exit 1
+printf 'PK\003\004stub' > "$out"
+exit 0

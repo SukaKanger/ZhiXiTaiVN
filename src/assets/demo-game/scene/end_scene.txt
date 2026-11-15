@@ -1,0 +1,6 @@
+changeFigure: -left -next;
+changeFigure: -right -next;
+changeBg:bg.webp -next;
+:舞台灯关了。;
+:记得把工程定期备份，别把打出来的 APK 当源码使。;
+end;

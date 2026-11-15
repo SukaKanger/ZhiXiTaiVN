@@ -1,0 +1,15 @@
+#!/system/bin/sh
+
+echo "javac ${_JAVA_OPTIONS:-}" >> "${JAVAC_TRACE:-/data/local/tmp/javac.trace}"
+d=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "-d" ] && d="$a"
+  prev="$a"
+done
+if [ ! -f "${JAVAC_MARK:-/data/local/tmp/javac.mark}" ]; then
+  : > "${JAVAC_MARK:-/data/local/tmp/javac.mark}"
+  echo "Error: java.lang.OutOfMemoryError: Java heap space (simulated)" >&2
+  exit 1
+fi
+mkdir -p "$d" && : > "$d/Stub.class"
+exit 0

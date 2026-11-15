@@ -1,0 +1,11 @@
+#!/system/bin/sh
+
+out=""
+for a in "$@"; do
+  case "$a" in --output=*) out="${a#--output=}" ;; esac
+done
+[ -n "$out" ] || out="classes.dex"
+mkdir -p "$(dirname "$out")"
+printf 'dex\n' > "$out"
+echo "dx: ok (fallback)"
+exit 0

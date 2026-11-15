@@ -1,0 +1,4 @@
+changeBg:lite_title.png -next;
+:测试到此结束。;
+:如果打包成功，你手里应该有一个几 MB 的 APK —— 不是 27 MB 那种。;
+end;

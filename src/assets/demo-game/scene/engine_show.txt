@@ -1,0 +1,16 @@
+changeBg:bg.webp -next;
+:先看背景。;
+changeBg:WebGAL_New_Enter_Image.webp -next -duration=800;
+setTransition: -target=bg-main -exit=shockwaveOut -next;
+:这张是带转场的切换，shockwaveOut 把上一张震出去。;
+changeFigure:stand.webp -left -enter=enter-from-left -next;
+:立绘从左滑进来，动画名 enter-from-left，动画表里还有十几个。;
+changeFigure:open_mouth.webp -right -next;
+:右边这张是表情差分，引擎按需加载，不占首屏时间。;
+setAnimation:shake -target=fig-left -next;
+:抖一下，这是 shake，作用对象 fig-left。;
+bgm:s_Title.mp3 -volume=100;
+:音量也能实时改，这句把 BGM 拉满。;
+changeFigure: -left -next;
+changeFigure: -right -next;
+choose:回打包台:pipeline.txt|回到开头:start.txt;

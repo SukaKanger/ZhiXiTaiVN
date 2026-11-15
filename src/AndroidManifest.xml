@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MIT · 织戏台 · ZhiXiTai VN -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.zhixitai.vn"
+    android:versionCode="26180050"
+    android:versionName="1.1.7-beta.50">
+
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="34" />
+
+    <!-- 本地 127.0.0.1 服务要用 socket -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 把打出来的 APK 装回本机 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 把构建工程与产物放到共享存储，Termux 才读得到 -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- 让 Termux 执行构建脚本 -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+
+    <!-- Android 11+ 要能看见 Termux 包名才判断得了装没装 -->
+    <queries>
+        <package android:name="com.termux" />
+    </queries>
+
+    <application
+        android:label="织戏台"
+        android:icon="@mipmap/ic_launcher"
+        android:theme="@style/StationTheme"
+        android:hardwareAccelerated="true"
+        android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:allowBackup="false"
+        android:largeHeap="true"
+        android:supportsRtl="true">
+
+        <activity
+            android:name=".StationActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize|uiMode"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

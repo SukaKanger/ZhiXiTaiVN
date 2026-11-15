@@ -1,0 +1,9 @@
+{
+  "year": 26,
+  "gen": 18,
+  "base": "1.1.7",
+  "stage": "beta",
+  "build": 50,
+  "updated": "2026-11-14",
+  "_note": "内部版本号 = 年(26) + 代际(18) + build 自增。versionCode = 2618*10000+build，versionName = <base>-<stage>[.build]，代际只进 code、不进名字。改这里只改这一份，其余文件由 tools/pc/version.ps1 生成。"
+}

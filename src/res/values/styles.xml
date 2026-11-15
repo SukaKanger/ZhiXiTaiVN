@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MIT · WebGAL 移动工作站 -->
+<resources>
+    <style name="StationTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF0A0B0C</item>
+        <item name="android:statusBarColor">#FF0A0B0C</item>
+        <item name="android:navigationBarColor">#FF0A0B0C</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:colorAccent">#FFFFB020</item>
+    </style>
+</resources>

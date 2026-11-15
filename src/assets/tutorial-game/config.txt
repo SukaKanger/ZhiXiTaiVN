@@ -1,0 +1,8 @@
+Game_name:新手引导 · 从这里开始;
+Game_key:station_tutorial;
+Title_img:WebGAL_New_Enter_Image.webp;
+Title_bgm:s_Title.mp3;
+Game_Logo:WebGalEnter.webp;
+Enable_Appreciation:true;
+Enable_Continue:true;
+Enable_flowchart:false;

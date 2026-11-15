@@ -1,0 +1,77 @@
+# 修了什么 · 原生层与构建脚本（对应 A1 评审）
+
+> 范围：`src/java/com/webgal/station/*`、`src/assets/kit/*.sh`、`src/res/xml/*`、`AndroidManifest.xml`、`.gitignore`、随包免责声明。
+> UI 侧（`index.html` / `style.css` / `app.js`）由并行的另一个代理改，清单见 `修了什么-UI.md`。
+> 本批产物：`WebGAL工作站-1.1.6-beta.23-lite.apk`（versionCode 26180023），真机 vivo Y77（内部名 V2219A）已装并核对；端上构建实测通过三次：13~14 秒出包 6.4 MB、`status.json=success`、产物名带包名、`job.env` 自动删除。
+> 本批 UI 侧另外修了一个真机才暴露的布局 bug：`style.css` 里 `.rail--left/.stage/.rail--right` 的 `grid-area` 没带 `.panel--wb` 前缀，把编辑器页撕成两条歪柱（PITFALLS #44）。
+
+## A1 条目 → 状态
+
+| A1 编号 | 问题 | 状态 | 落点 |
+|---|---|---|---|
+| 4.1 | 写文件不看返回值，失败回「成功」 | ✅ 已修 | `StationActivity.apiWriteText` 判 `Util.writeText` 布尔，失败回 `errJson` + 人话原因 |
+| 4.2 | 读文件 IO 失败仍 `ok:1, text:null` | ✅ 已修 | `apiReadText` 拆成「不存在」/「读不出来」两种错误 |
+| 4.3 | `parseOptions` 解析失败静默落默认 | ✅ 已修 | catch 里 `emitError`，前端能看到「哪些字段用了默认值」 |
+| 4.4 | 偏好超 4096 字符静默丢弃 | ✅ 已修 | 上限 8 KB，超限 `emitError` 提示删短 |
+| 4.5 | 工程清单损坏即清空 | ✅ 已修 | `Store.load()` 坏串备份到 `projects_backup` + 从 `projects/` 目录重建；`apiProjects` 回 `recovered` 供界面提示 |
+| 4.6 | `status.json` 解析失败理由丢失 | ✅ 已修 | 解析失败把原文尾巴塞进 `reason`；`apiBuildState` 同时透出 `warn` |
+| 4.7 | `apksigner verify` 失败仍标 success | ✅ 已修 | `build_apk.sh` 写 `warn` 字段；tools.sh 首跑失败加 ⚠ 标记 |
+| 4.8 | `catch (Exception ignored)` 无日志 | 🟡 部分 | 桥方法、安装链路、LocalServer 停机路径已补 `Log.w`；剩下的纯关闭异常仍吞（关流失败没有信息量） |
+| 5.1 | 本地服务 CORS `*`、无 Origin 校验 | ✅ 已修 | `LocalServer` 回显自身 origin + `originAllowed()`：带 Origin/Referer 且不是本站 → 403 |
+| 5.2 | `buildId` 未校验（目录穿越） | ✅ 已修 | 新增 `resolveBuildDir()`（拒绝 `..`、`/`、`\`、`.` 开头 + canonical 前缀校验），`buildState`/`startBuild`/`exportBuild` 三处统一 |
+| 5.3 | 预览 iframe 与主界面同源，能调管理桥 | ❌ 未修（见下） | 单 WebView 的桥是整页可见，换端口也不隔离；真要修得把预览换成第二个 WebView 或独立进程 |
+| 5.4 | 安装桥接受任意路径、URL 桥任意跳转 | ✅ 已修 | `insideBuildOut()` 只认构建目录下的 apk；`apiOpenUrl` 只放 http/https/mailto |
+| 5.5 | 签名口令明文落 `job.env` | 🟡 缓解 | `job.env` 写后设 0600（best-effort，FUSE 上不保证）；脚本读到后立刻删除该文件（成功、失败两条路径都删） |
+| 5.6 | WebView 调试口 release 常开 | ✅ 已修 | 按 `ApplicationInfo.FLAG_DEBUGGABLE` 门控 |
+| 5.7 | 明文流量全开 | ✅ 已修 | 新增 `res/xml/network_security_config.xml`，只放行 `127.0.0.1` / `localhost`，清单 `usesCleartextTraffic="false"` |
+| 5.8 | android.jar 下载无校验 | 🟡 缓解 | `setup.sh` 下完先验 zip 结构 + `android/os/Build.class`，不合法直接丢；哈希记进 `toolchain.env` 供比对（没有官方 sha256 可对照，所以不是强校验） |
+| 6.1 | 只 `set -u` 没 `pipefail` | ✅ 已修 | 头部加 `set -o pipefail` |
+| 6.2 | `status.json` 不转义 | ✅ 已修 | `json_escape()` 转义 `\`、`"`、换行 |
+| 6.3 | 同名应用互相覆盖产物 | ✅ 已修 | 产物名 `名字-包名下划线化.apk` |
+| 6.4 | 失败不留回滚、中间产物堆积 | ✅ 已修 | `trap` 失败清 `WORK`；启动时清 7 天前的 `build/` 目录 |
+| 6.5 | 并发重入无锁 | ✅ 已修 | `flock -n`（无 flock 则 pid 文件），抢不到直接写 failed 状态并退出 |
+| 6.6 | 签名/版本参数校验不足 | ✅ 已修 | 校验 versionCode 纯数字且 ≥1；`new` 模式复用同名库前先 `keytool -list` 验别名/口令；d8 类列表改 `@argfile` |
+| 6.7 | setup.sh 重复行、依赖失败信息 | 🟡 部分 | 下载校验已加；重复 chmod 行未逐条核对（无 bash 环境，无法本地 `bash -n` 验证，改动越少越安全） |
+| 7.1 | SP `apply()` 无原子替换 | ✅ 已修（间接） | 4.5 的备份 + 重建兜底已落地；没换数据库 |
+| 7.2 | 清单无 schema 版本 | ✅ 已修 | `projects_schema=2` 写入；`fromJson` 仍靠 `optXxx` 兜底但已有版本位，后续可迁移 |
+| 7.3 | 默认版本号前后端不一致 | ✅ 已修 | `apiEnv`/`apiOnboard` 下发 `versionBase` 与 `versionStartCode`；Java 默认 `V.NAME`/`V.CODE` |
+| 8.1 | `termuxInstall` 前端无 case | ➡️ UI 侧 | 已交给并行代理在 `app.js` 补 |
+| 8.2 | 三个桥方法无人调用 | ⬜ 保留 | `exitPreview` 被 `onBackPressed` 用；`toggleOrientation` / `version` 留着无害，删了反而下次要用还得回滚——记在这里，不做 |
+| 8.3 | 字段结构不统一 | ✅ 部分 | 失败统一 `ok:0`+`message`；`probeSent` 无信息量（前端可与 `readProbe` 轮询合并，见 UI 侧） |
+| 8.4 | 轮询无退避 | ➡️ UI 侧 | 交给并行代理 |
+| 9.1 | 无自动化测试 | ⬜ 保留 | 没有 Gradle/JVM 测试框架，只能靠 `tools/test/run-selftest.sh` 桩；被本轮改动影响的纯逻辑（版本换算、路径校验）已靠真机 + 编译验证覆盖 |
+| 9.2 | 日志分级粗 | 🟡 部分 | 关键失败点补了 `Log.w` |
+| 9.3 | 魔法常量散落 | 🟡 部分 | 版本号段已归到 `V.java`；25 秒看门狗、1.2 秒轮询等仍在 UI 侧常量里（见 UI 代理） |
+| 9.4 | 两语句挤一行 | ✅ 已修 | `parseOptions` 拆行 |
+| 10.1 | 随包文案残留旧版本号 | ✅ 已修 | `src/assets/legal/DISCLAIMER.txt` 改为「1.1.5-beta（以关于页为准）」；`version.ps1`/`build-station.ps1` 注释与 `$versionName` 规则更新 |
+| 10.2 | 模板双份 | ⬜ 保留 | 根 `templates/` 与 `assets/templates/` 由 `build-station.ps1` 每次同步，保持现状并已在注释里写明 |
+| 10.3 | `dist/*.zip` 未被忽略 | ✅ 已修 | `.gitignore` 补 `dist/*.zip` |
+| 1.1 | StationActivity 上帝类 | ⬜ 不做 | 拆三个 Controller 是纯搬移，但动静远大于本轮收益；等下次加功能时按 `ImportController / BuildController / EnvController` 拆，评审原文留着当图纸 |
+| 1.2 | 桥方法多余 | ⬜ 保留 | 同上 8.2 |
+| 1.3 | 构建目录时间戳撞名 | ✅ 已修 | `yyyyMMdd-HHmmss-SSS` |
+| 2.1 | 桥线程里做阻塞 IO | 🟡 部分 | 未改线程模型；`apiExportBuild` 仍是同步打 zip（改异步要动前端契约，交给下一批） |
+| 2.2 | 桥线程直接 `requestPermissions` | ✅ 已修 | `runOnUiThread` 包一层（`apiStartBuild`）；`apiRunProbe` 同类已按此模式（见同文件） |
+| 2.3 | 裸线程无取消 | ✅ 已修 | 三条线程存字段，`onDestroy` 中断 |
+| 2.4 | 构建无重入防护 | ✅ 已修 | Java `buildRunning` + 脚本 `flock` |
+| 2.5 | LocalServer 停服不中断 worker | ✅ 已修 | `stop()` 遍历 `workers` 中断并清空 |
+| 3.1 | 无 onPause/onResume | ✅ 已修 | 补 `onPause`（`web.onPause()` + `pauseTimers()`）与 `onResume` |
+| 3.2 | Installer 静态接收器泄漏 | ✅ 已修 | `receiverCtx` 用 ApplicationContext + `unregister()`，`onDestroy` 调用；失败会话 `abandonSession` |
+| 3.3 | 选图临时文件只增不清 | ✅ 已修 | 拼装时拷完即删 `picked-*.img`；7 天前的构建目录一并清 |
+| 3.4 | 导入失败留半截目录 | ✅ 已修 | catch 里 `Util.deleteTree(dest)`；导入中重复点「导入」直接拒绝 |
+
+## 三条明确没修的，以及为什么
+
+1. **5.3 预览 iframe 能调管理桥**：`addJavascriptInterface` 是整页注入，换端口、换 origin 都隔不断；要真隔离得把预览扔进第二个 WebView（不带桥）或独立进程。这是一次结构性改动，硬塞进这批会把刚验过的预览链路搞成半坏。
+2. **1.1 拆上帝类**：纯搬移，收益在以后；现在拆等于在刚改过 40 处错误路径的文件上再来一次大手术。
+3. **9.1 单测**：没有测试框架，新增一套 JVM 测试基建的工程量比它保护的东西还大。
+
+三条都写在这里，不算「忘了」。
+
+## 真机追加修正（beta.22 / beta.23）
+
+跑端上构建时又抓到两条，都不在原评审清单里，但属于「版本必须真迭代」这一条红线：
+
+- **游戏包 versionName 停在 1.1.5**：前端 `fVersionName` 兜底写死 `'1.1.5'`，Java 的重命名开关是 `if (versionCode > 2601)`，第一个包正好 2601 不触发。前端兜底改 `1.1.6`；Java 去掉 code 开关，名字一律以 `V.BASE` 为准并校验 `startsWith(V.BASE)`，对不上就覆盖。重测端上产物 `2604 / 1.1.6-beta.4`。
+- **端上产物标题菜单是德语**：WebGAL 4.6.4 只认 `localStorage.lang` 的数字枚举，缺键时落 `de`。在 `src/assets/engine/index.html` 里补一段「键缺失才写 0」的引导脚本，重测中文菜单正常。这是对上游引擎唯一的改动，按 MPL-2.0 在 README 第九节明示。
+
+变量名坑：新加的 `String base` 与同方法后面的 `File base` 撞名，`javac` 直接报错，改名 `verBase` 才过。两条都已写进 `docs/PITFALLS.md`（#46 / #47）。

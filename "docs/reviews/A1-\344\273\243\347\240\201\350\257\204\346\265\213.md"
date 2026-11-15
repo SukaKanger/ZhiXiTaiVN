@@ -1,0 +1,416 @@
+# A1 · 代码评测 · WebGAL-Mobile-Workstation
+
+> 评审对象：仓库快照，源码侧版本 `1.1.5-beta.17` / versionCode `26180017`（`V.java:10-12`、`src/AndroidManifest.xml:5-6`、`VERSION.json:3-5` 三处一致；任务简报里写的 `.16 / 26180016` 与仓库实际不符，以仓库为准）。
+> 评审方式：只读源码与文档，未执行任何 gradle / adb / 脚本命令，未改任何源码。凡没在真机或运行时验证过的，一律标「未验证」。
+> 定位前提：用户是不会编程的普通创作者，单人维护、手机真机调试为主。下面的「改法」都按单人一两次提交能落地来给，不写"建议引入 DI 框架"这种空话。
+
+---
+
+## 一句话结论
+
+链路设计是想明白了的（本地 HTTP 绕开 `file://` 限制、随机端口换 origin、脚本与 Java 分工清楚、降级路径基本齐全），但 **StationActivity 是个什么都往里塞的上帝类，错误路径上到处是"静默成功 / 静默吞掉"，前后端事件契约断了一根线**；对普通用户来说，最致命的不是架构丑，而是"以为存上了 / 以为装上了 / 以为在打包"，实际什么都没发生。
+
+---
+
+## 先说做得对的
+
+1. **路径穿越在文件侧兜住了**：`LocalServer.normalize()`（`LocalServer.java:537-588`）先百分号解码再消 `..`，`FileSource.safe()`（`LocalServer.java:143-147`）再用 canonical 路径做前缀二次校验；工程文件读写走 `resolveInGame()`（`StationActivity.java:837-852`）同款校验。不是只靠字符串拦 `../`。
+2. **本地服务的并发代际处理是踩过坑后修对的**：accept 循环持有本代 `ServerSocket` 引用并校验 `ss == serverSocket`（`LocalServer.java:268-280`），`restart()` 换端口不会把旧 accept 线程 NPE 打死——对应 `docs/PITFALLS.md` 里记过的真机事故。
+3. **构建脚本的降级链是真做了的**：javac 超时/失败降堆重试（`build_apk.sh:266-279`）、d8 失败回退 dx（`build_apk.sh:292-298`）、zipalign 缺失跳过（`build_apk.sh:315-323`）、zip 缺失回退 `jar uf`（`build_apk.sh:305-311`），且有独立桩程序自检（`tools/test/run-selftest.sh`）。
+4. **签名/许可边界写得规矩**：MPL 引擎原样内嵌、legal 三件套强制随产物复制（`BuildKit.java:124-127`），GPL 工具只走独立进程 Intent 调用，`THIRD-PARTY-NOTICES.md` / `NOTICE.md` 逐组件列了许可证与位置，`LICENSES/` 四个全文都在。
+5. **版本号双抬（code + name）有实现**：重复打包自动 `versionCode +1` 并同步追加 versionName 尾巴（`StationActivity.java:1014-1033`），正面回应了 PITFALLS 38 记的 vivo/小米拦截页只看 name 的坑。
+
+---
+
+## 1. 结构与耦合
+
+### 1.1 StationActivity 是 1757 行的上帝类，UI 之外的业务逻辑全堆在里面
+
+- **问题（`StationActivity.java` 全文，1757 行）**：一个类同时扛了——WebView 与对话框搭建（`onCreate` 89-207）、存储根目录探测（`getBuildRoot` 260-269）、内置 demo/引导工程铺放（`ensureDemo` 342、`ensureTutorial` 371）、环境体检（`apiEnv` 438、`apiOnboard` 469）、工程 CRUD（`apiProjects` 574、`apiCreateProject` 591、`apiDeleteProject` 695）、预览舞台（`apiStage` 717、`apiPreview` 943、`apiExitPreview` 974）、编辑器读写（`apiWorkspace` 758、`apiReadText` 854、`apiWriteText` 871、`apiNewScene` 886、`apiDeleteScene` 914）、构建编排（`apiPrepareBuild` 1001、`apiBuildState` 1146、`apiStartBuild` 1190、`apiExportBuild` 1253）、安装/探针/部署/选图/选签名/剪贴板/方向切换/偏好读写/目录导入复制（1355-1535、1536-1645）。`Api.java` 虽然是薄桥（只做转发），但转发目标全在这一个 Activity 里。
+- **为什么是问题**：Activity 一旦被系统回收，所有这些状态（`previewing`、`pendingIconFile`、`pendingRunScript`、当前 buildId）跟着一起没；改任何一条业务线都要在这个大类里翻找；线程、IO、UI 回调缠在一起，出问题很难定位。对单人项目这不是"优雅性"问题，是下次加功能必踩的维护成本。
+- **具体改法**：按现在的方法分组，先做三次纯搬移、不改逻辑：
+  1. `ImportController`：`startImport` / `copyDocumentTree` / `detectGameDir`（1536-1668）整体搬出，构造时传 `Context` 与一个回调接口（`onImported` / `onError`）。
+  2. `BuildController`：`apiPrepareBuild` / `apiBuildState` / `apiStartBuild` / `apiExportBuild` / `zipDir` / `parseOptions`（1001-1280）搬出，Activity 只负责把桥调用转过去、把回调 `emit` 回前端。
+  3. `EnvController`：`apiEnv` / `apiOnboard` / `apiInstallTermux` / `apiRunProbe` / `apiReadProbe` / `apiDeployKit` / `findTermuxApk`（438-560、1315-1367）搬出。
+  剩下 Activity 只留 WebView 搭建、生命周期、对话框与 `emit` 转发。`Store` 已经是独立类，方向是对的，照着拆即可。
+
+### 1.2 三个未被前端使用的桥方法，属于白暴露的面
+
+- **问题**：`Api.exitPreview()`（`Api.java:103-106`）、`Api.toggleOrientation()`（`Api.java:173-176`）、`Api.version()`（`Api.java:193-196`）在 `app.js` 里没有任何 `call(...)` 调用（全文件检索仅 `openTermux/openUrl/requestAllFiles` 等被使用）。`exitPreview` 只在 `onBackPressed()` 内部走（`StationActivity.java:1730`）。
+- **为什么是问题**：桥方法每多一个，WebView 里任何脚本（含预览 iframe 里的页面，见 5.3）就多一个能调的入口；没人用的方法留着只会扩大攻击面，也让契约核对多一份噪音。
+- **具体改法**：前端确实不需要就从 `Api.java` 删掉；`version()` 如果是留给以后关于页用的，先注释掉并写明用途，别挂在公开桥上。
+
+### 1.3 构建目录时间戳命名，同一秒内两次拼装会撞名
+
+- **问题（`BuildKit.java:87-88`）**：`stamp = yyyyMMdd-HHmmss`，目录名 `project.id + "-" + stamp`。秒级精度，同一工程 1 秒内连点两次「生成构建工程」，两次准备落到同一个 `base` 目录，后写的覆盖先写的中间产物。
+- **为什么是问题**：双击/手抖在手机上很常见；撞名后两份构建状态混在一个目录里，`status.json` / `build.log` 互相覆盖，前端轮询看到的是一团乱账。
+- **具体改法**：stamp 追加毫秒或短随机串（`yyyyMMdd-HHmmss-SSS` 或 `-` + 6 位随机），一行改动。
+
+---
+
+## 2. 并发与线程
+
+### 2.1 桥方法在 WebView binder 线程上直接做阻塞 IO，没有切线程
+
+- **问题**：`@JavascriptInterface` 方法跑在 WebView 的 binder 线程，下面这些方法在该线程上同步做磁盘 IO / 目录遍历 / 打包：
+  - `apiProjects`（`StationActivity.java:574`）：`toUiJson()` 里对每个工程做 `File(gameDir).exists()`（`Store.java:77`）；
+  - `apiWorkspace`（`StationActivity.java:758-796`）：列场景目录、对每个场景文件 `countLines` 整文件读一遍（778、798-810），再读 `config.txt`；
+  - `apiReadText`（854）、`apiWriteText`（871）、`apiBuildState`（1146，读 status.json + build.log）、`apiExportBuild`（1253-1270，把整个构建目录打成 zip）。
+- **为什么是问题**：binder 线程被慢 IO 占住时，后续桥调用排队；工程文件一多（几百个场景/素材），编辑器打开、导出 zip 这种动作会卡桥。虽然不直接 ANR 主线程，但表现就是"界面点了没反应"，和 PITFALLS 里记过的桥线程事故是同一类隐患。
+- **具体改法**：读类桥方法（projects/workspace/readText/buildState）保持同步返回可以接受，但把目录遍历/整文件计数挪到 `Store` 已有的同步方法里并控制单文件大小；`apiExportBuild` 这种重活改成异步：先回 `{ok:1, accepted:1}`，结果走 `emit("exported", ...)`，和 prepareBuild 的模式对齐（1001-1061）。
+
+### 2.2 从 binder 线程直接调 `requestPermissions`
+
+- **问题**：`apiStartBuild`（`StationActivity.java:1212`）和 `apiRunProbe`（`StationActivity.java:1316`）在桥线程上直接 `requestPermissions(...)`。
+- **为什么是问题**：权限弹窗框架要求在主线程发起；不同 ROM 上行为不一致，属于"有的机器弹得出、有的机器静默没反应"的雷。PITFALLS 32/33 已经吃过"静默失败"的亏，这条是同类。
+- **具体改法**：包一层 `runOnUiThread(() -> requestPermissions(...))`，和文件里 `apiPreview` 已经做的处理（960-968）保持一致。
+
+### 2.3 后台线程没有取消机制，Activity 销毁后仍在跑
+
+- **问题**：三条裸 `new Thread`——bootstrap（`StationActivity.java:211-223`）、prepare-build（1002-1061）、import-project（1537-1586）。线程持有外部 `StationActivity.this`，没有保存引用、没有 `interrupt()`、没有在 `onDestroy` 里停掉。
+- **为什么是问题**：用户在 bootstrap 铺资源、导入工程、拼装构建工程的中途按返回/被系统回收，线程继续跑 IO，回调 `emit` 时虽然有 `web != null` 判空（1678），但 Context 泄漏与对已销毁 Activity 写 SP 的窗口都在。导入大工程时这个窗口尤其长。
+- **具体改法**：把三条线程句柄存成字段，`onDestroy()` 里 `interrupt()` 并在 Runnable 循环点检查 `isInterrupted()`；回调里先判 `isFinishing() || isDestroyed()` 再 `emit`。单人落地可以先只做"存引用 + onDestroy 中断"。
+
+### 2.4 构建动作没有重入防护，脚本侧也没有锁
+
+- **问题**：前端连点「开始构建」会多次进 `apiStartBuild`（`StationActivity.java:1190`）；`build_apk.sh` 全脚本没有 `flock` 或任何并发判断，`WORK` 目录按 `basename "$HERE"` 派生（`build_apk.sh:49-54`），同一构建工程跑两次会共用同一 `WORK`，`build.log` 被 `: > "$LOG"`（55）截断、`status.json`（70）互相覆盖。
+- **为什么是问题**：国产 ROM 上用户本来就容易被冻住后重试；双开构建会让两份编译写同一堆 `.class/.dex`，产物状态不可信，日志还对不上。
+- **具体改法**：Java 侧加一个 `boolean building` 标志，`apiStartBuild` 入口判断已在构建就直接回"正在构建中"；脚本侧在 `HERE` 下建一个 `.build.lock`（`flock 9` 或 pid 文件 + 存活检查），抢不到锁就 `fail("另一个构建还在跑")`。
+
+### 2.5 LocalServer 停服时不中断在途 worker
+
+- **问题（`LocalServer.java:247-258`）**：`stop()` 只关 `ServerSocket`、置空字段，不 interrupt `workers` 列表里的在途线程；worker 靠 20 秒 `soTimeout`（305）或请求自然结束才退出。
+- **为什么是问题**：`restart()` 换端口后，旧 worker 还攥着旧 socket 和旧 `FileSource` 引用；短时间内旧连接读到的可能是上一个工程的挂载。当前 WebView 立刻换 origin，实际命中概率不高，但生命周期不干净。
+- **具体改法**：`stop()` 遍历 `workers` 调 `interrupt()`，并在 `handle()` 里对中断/`running=false` 提前退出。
+
+---
+
+## 3. 生命周期与资源
+
+### 3.1 StationActivity 没有任何 onPause/onResume/onStop/onSaveInstanceState
+
+- **问题**：全类检索只有 `onBackPressed`（1728）和 `onDestroy`（1741），没有 `onPause/onResume/onStop`。WebView 没有 `onPause()/onResume()` 配对（对比游戏模板 `GameActivity.java:165-178` 是有的）；后台时 JS 定时器、引擎音频不挂起。
+- **为什么是问题**：切后台后 WebView 的 JS 继续跑、前端轮询（`app.js:754`，1.2 秒一次）不停；低内存回收后重建，`previewing`、`pendingIconFile`、`pendingRunScript`、当前 `buildId` 全部丢失，`/game/` 挂载也不会在新 `onCreate` 里恢复（77-79 只挂 engine/ui/legal），用户回到一个没有工程预览的空工作台。
+- **具体改法**：补 `onPause` 里 `web.onPause()`、`onResume` 里 `web.onResume()`；把需要跨重建保留的状态（当前工程 id、构建 id、预览标记）写进 Store/SP，`onCreate` 末尾读回并重新挂 `/game/`。
+
+### 3.2 Installer 静态广播接收器持有 Activity，从不反注册
+
+- **问题（`Installer.java:59`、`107-143`、`StationActivity.java:1741-1750`）**：`receiver` 与回调闭包是 `static`，`install()` 时把 `StationActivity.this` 传进去（`StationActivity.java:1242`），回调匿名类持有 Activity 引用；`onDestroy` 里没有 `unregisterReceiver`。接收器要等下一次 `install()` 进来才被旧的替换掉（`Installer.java:108-114`）。
+- **为什么是问题**：Activity 销毁后静态接收器 + 闭包仍握着 Context，构成 Activity 泄漏；安装广播晚到一步，回调往一个已销毁的界面 `emit`。
+- **具体改法**：把 receiver 改成实例字段（或在 Activity `onDestroy` 里调一个 `Installer.unregister(act)`）；回调里判 `isDestroyed()` 再发界面事件。另外 `createSession` 成功后、`openWrite` 前后抛异常时没有 `session.abandon()`（76-92），补一个 finally 放弃会话。
+
+### 3.3 选图/选签名的临时文件只增不清
+
+- **问题**：图标每次选择都复制一份到 `icons/picked-<时间戳>.img`（`StationActivity.java:1467-1484`），构建时再拷一份 `icons/icon-<时间戳>.img`（`StationActivity.java:1088-1105`）；签名副本进 `keys/`（1495 起）。这些目录没有任何清理逻辑。
+- **为什么是问题**：用户反复换图标试效果，共享存储里堆一堆没人引用的 `.img`；对存储本来就紧张的低配机是纯负担。
+- **具体改法**：拼装新构建工程时，清理上一轮未被引用的 `icons/icon-*.img`；`picked-*.img` 在 `prepared` 事件发出后删掉原件、只留构建副本。
+
+### 3.4 导入流的游标与流基本关了，但失败半途不留清理路径
+
+- **问题（`StationActivity.java:1590-1645`）**：游标在 finally 关（1641-1643），输入输出流在 finally 关（1630-1633），这点没问题；但复制到一半抛异常时，只有 `detectGameDir` 失败才 `deleteTree(dest)`（1557），复制过程中 IO 异常留下半截目录，清单里也没有这条记录，磁盘上成了孤儿目录。
+- **为什么是问题**：普通用户不会自己去共享存储翻目录删东西，半截工程占空间且下次导入同名 id 不冲突（id 是时间戳），越积越多。
+- **具体改法**：`startImport` 的 catch 里对本次 `dest` 做一次 `Util.deleteTree(dest)`，再 `emitError`。
+
+---
+
+## 4. 错误处理
+
+### 4.1 写文件不看返回值，写失败回前端"成功"
+
+- **问题（`StationActivity.java:879-880`）**：`Util.writeText(f, text)` 返回 `boolean`（`Util.java:77-94`），但 `apiWriteText` 直接 `return okJson()`，没看这个布尔值。
+- **为什么是问题**：这是编辑器保存剧本的入口。共享存储满了、权限被收回、文件被占用时，磁盘没写进去，界面却提示保存成功——创作者的剧本稿丢了还不知道。对这个产品的定位（不会编程的人写稿），这是全部错误路径里后果最重的一条。
+- **具体改法**：`if (!Util.writeText(...)) return errJson("写入失败：存储空间不足或权限被收回");`；前端 `writeText` 失败 toast 标红。
+
+### 4.2 读文件 IO 失败返回 `ok=1` + `text=null`
+
+- **问题（`StationActivity.java:862-864`、`Util.java:31-41`）**：`Util.readText` 捕获异常返回 `null`，`apiReadText` 仍然 `r.put("ok", 1)`，只是 `text` 为 null。`apiWorkspace` 的 `config` 同理（790）。
+- **为什么是问题**：前端拿到 `ok:1` 就按正常路径渲染，空文本和"文件读不出来"混在一起，排障时日志里看不出是 IO 错还是文件本来就空。
+- **具体改法**：`readText` 区分"不存在"与"IO 异常"；`apiReadText` 读失败走 `errJson`，不要混进成功响应。
+
+### 4.3 选项 JSON 解析失败，静默落到默认值，用户填的表单被吞
+
+- **问题（`StationActivity.java:1107-1109`）**：`parseOptions` 外层 `catch (Exception e)` 只 `Log.w`，之后继续用半默认的 `Options` 返回；包名不合法另有兜底（1110-1112），但应用名、版本号、签名模式、图标路径等字段解析失败就无声丢了。
+- **为什么是问题**：前端表单 JSON 一旦因为某个字段序列化异常（比如文本里带了怪字符）整段 parse 炸掉，用户填的应用名/包名/签名选择全部回到默认，界面上还看不出来哪里丢了。
+- **具体改法**：catch 里 `emitError("构建参数解析失败，已用默认值：" + e.getMessage())`；或者逐字段 `optString/optInt` 取，别整段一个 try。
+
+### 4.4 偏好 JSON 超过 4096 字符被静默丢弃
+
+- **问题（`StationActivity.java:1432-1436`）**：`apiSavePrefs` 长度 ≥4096 直接不写，无任何提示。
+- **为什么是问题**：表单草稿里塞了长应用名/备注，超阈值后下次打开回到旧草稿，用户以为保存了。
+- **具体改法**：超限时回 `errJson("草稿太长，存不下")`，前端 toast；或者把上限提到合理值（SP 单条存几 KB 没问题）。
+
+### 4.5 工程清单 JSON 损坏 → 界面工程库直接清空，无备份无提示
+
+- **问题（`Store.java:102-109`）**：`load()` 解析失败只 `Log.w`，内存列表清空；原始坏 JSON 还留在 SP 里，不会被覆盖。
+- **为什么是问题**：一次写入中断/SP 损坏后，用户打开 app 看到"一个工程都没有"，但磁盘上 `projects/` 里的文件还在；普通用户无法自行把清单救回来。没有备份键、没有"检测到清单损坏，是否从磁盘重建"的兜底。
+- **具体改法**：解析失败时先把原始串备份到 `projects_backup` 键，再清空内存；`apiProjects` 或启动时检测到备份就提示"清单损坏，已从磁盘目录重建"，按 `projects/` 目录重新扫一遍入库。
+
+### 4.6 构建状态文件解析失败，理由静默丢失
+
+- **问题（`StationActivity.java:1161-1170`）**：`status.json` 解析异常被外层 catch 兜成 `errJson`；但文件存在、JSON 坏了（见 6.3 转义问题）时，`new JSONObject(status)` 抛错进 catch，前端拿到"读取构建状态失败"，拿不到 `reason`；而文件不存在时默认态是 `prepared`（1156）。失败原因到底是脚本没跑、还是状态文件写坏，界面分不出来。
+- **为什么是问题**：用户看到的是一句笼统错误，没法自查；和 PITFALLS 里反复强调的"出错要让人看得懂、能自己恢复"相悖。
+- **具体改法**：解析失败时把原始 `status.json` 文本的尾部塞进响应 `reason`，前端原样展示；脚本侧先修 JSON 转义（6.3）。
+
+### 4.7 脚本侧若干失败分支只记日志不判失败
+
+- **问题（`build_apk.sh`）**：
+  - `tools.sh` 首次钉路径跑挂了只 `log` 继续（129）；
+  - zipalign 失败明确降级继续（318-320，这是有意的，可接受）；
+  - `apksigner verify` 报错只记日志继续（382-384）；
+  - d8 失败回退 dx，dx 也没出 dex 才 fail（292-299，OK）。
+- **为什么是问题**：verify 不通过的包仍被标记 success（402），用户装机可能被拒，界面却显示"构建完成"。
+- **具体改法**：verify 失败至少在 `status.json` 的 `reason` 里写一条警告字段，前端在成功卡片上标"签名校验未过，可能装不上"；tools.sh 跑挂要在日志头部留醒目标记。
+
+### 4.8 大量 `catch (Exception ignored)` 没有日志
+
+- **问题**：`StationActivity.java` 中 190、282、324、548、829、1247、1403、1412、1458、1482、1509 等多处 `ignored`；`LocalServer.java:96/118/255/291/471/476` 流关闭异常静默；`Installer.java:111` 反注册异常静默。
+- **为什么是问题**：真机出问题只能靠 logcat 翻栈，被吞的那部分连栈都没有；单人维护时复现成本极高。
+- **具体改法**：纯资源关闭（close）的可以继续吞，但要 `Log.w(TAG, "...", e)` 留一行；涉及回调/IO 结果的不能吞。不用一次清完，先清桥方法与安装链路里的。
+
+---
+
+## 5. 安全
+
+### 5.1 本地服务无任何鉴权，CORS 放通 `*`
+
+- **问题（`LocalServer.java:222` 绑 127.0.0.1 随机端口是对的；但 `486` 响应头 `Access-Control-Allow-Origin: *`，且没有任何 token / Origin 校验）**。
+- **为什么是问题**：回环接口在同一台设备上对其他 app 的进程并非天然不可达（具体隔离强度随 ROM，未验证）；随机端口缩小了命中面，但同设备其他应用若扫到端口，可直接读 `/game/` 下工程文件。CORS `*` 主要影响浏览器页面跨源读取，桥本身不走 CORS，风险等级中等。
+- **具体改法**：校验请求 `Origin`/`Referer` 为空或匹配 `http://127.0.0.1:<port>` 才放行；CORS 头回显具体 origin 而不是 `*`；不必上 token，单人项目这两步就够。
+
+### 5.2 `buildId` 路径未校验，存在目录穿越面
+
+- **问题（`StationActivity.java:1149`、`1193`、`1256`）**：`new File(new File(getBuildRoot(), "build"), buildId)`，`buildId` 直接来自桥参数，没有走 `resolveInGame` 那套 canonical 校验。`apiBuildState` / `apiStartBuild` / `apiExportBuild` 三处同款。
+- **为什么是问题**：正常流程 `buildId` 是 Java 自己发的时间戳目录名（`BuildKit.java:88`），但桥是暴露给 WebView 的，加载进 WebView 的任何脚本都能传 `../../` 进去读/打包构建根下的其他目录。相比工程文件侧的严格校验，这条链是漏的。
+- **具体改法**：抽一个 `resolveBuildDir(String buildId)`，复用 canonical 前缀校验（参照 837-852），三段入口统一过一遍；`buildId` 里含 `/`、`\`、`..` 直接拒绝。
+
+### 5.3 JS 桥暴露给预览 iframe，游戏页面可调管理接口
+
+- **问题（`StationActivity.java:206` `addJavascriptInterface(new Api(this), "Station")`；`index.html:90` 预览用 iframe 同源加载）**：`addJavascriptInterface` 注入的对象对同 origin 的所有 frame 可见；`apiStage` 重启后 iframe 与主界面同源同端口（717-733）。也就是说预览的游戏页面脚本理论上能调到 `deleteProject`、`install`、`writeText`、`exportBuild` 这些管理桥。
+- **为什么是问题**：WebGAL 工程里可能塞了第三方脚本/素材；游戏页一旦被注入脚本，工作面桥等于对它敞开。当前只在本地跑、无外网上传，风险偏中，但这是架构性暴露面。
+- **具体改法**：短期：把桥方法按"工作台界面可用 / 预览页不可用"分组，`apiStage` 之后临时摘掉管理接口（`web.removeJavascriptInterface("Station")` 前先包一个只读子集对象）；中期：工作台界面与预览 iframe 走不同端口/不同服务实例，桥只挂在主 frame。
+
+### 5.4 安装桥接受任意 APK 路径，URL 桥直接跳任意地址
+
+- **问题**：`apiInstall(String apkPath)`（`StationActivity.java:1241-1251`）把参数直接 `new File(apkPath)` 交给安装会话，不校验是否在 `buildRoot/out` 下；`apiOpenUrl(String url)`（1400-1405）直接 `ACTION_VIEW`，异常还被吞掉（1403）。
+- **为什么是问题**：同 5.2，桥面没有最小权限；任意文件路径安装在本地桥场景下影响有限，但不该留。
+- **具体改法**：`apiInstall` 校验 APK canonical 路径位于 `buildRoot/out` 或 `buildRoot/build/*/out` 之下；`apiOpenUrl` 只放 `http/https/mailto`，其余拒绝并回提示。
+
+### 5.5 调试签名口令与自定义口令以明文写进共享存储 job.env
+
+- **问题（`BuildKit.java:206-219`）**：`KS_STORE_PASS` / `KS_KEY_PASS` 明文写进 `build/<buildId>/job.env`，落在 `Download/WebGALStation/` 共享存储；debug 口令硬编码 `android`（`build_apk.sh:335-341`、`StationActivity.java:1082-1085`）。
+- **为什么是问题**：共享存储对其他持有存储权限的应用可读；玩家选"新建/自定义"模式打的是要上架的包，口令落明文文件是真风险。debug 模式口令公开无所谓，但 `new`/`custom` 模式不该把用户口令再落一份明文。
+- **具体改法**：口令不写 job.env，改为构建启动时由 Java 侧通过环境变量/临时只读文件传给脚本（用完即删）；至少在 `job.env` 写完、脚本读走后清理口令行。
+
+### 5.6 WebView 调试开关无条件打开，release 包也开
+
+- **问题（`StationActivity.java:100`）**：`WebView.setWebContentsDebuggingEnabled(true)` 硬编码，没有 BuildConfig 门控；README 296-297 自己也标注"正式分发请关掉"。
+- **为什么是问题**：正式分发包开着调试口，同设备其他浏览器/WebView 可经 `chrome://inspect` 附加读界面内容；一行开关的事，没必要带到 release。
+- **具体改法**：按 `BuildConfig.DEBUG` 门控；没有 BuildConfig 就用 `(getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0` 判断。
+
+### 5.7 清单与组件导出面
+
+- **问题（`src/AndroidManifest.xml`）**：`StationActivity` `exported="true"` 但只有 LAUNCHER intent-filter，无自定义 action 入口，尚可；`usesCleartextTraffic="true"`（31）。游戏模板 `templates/game/AndroidManifest.xml:23` 同样 `exported="true"` + LAUNCHER，无外部 action。
+- **为什么是问题**：cleartext 只用于回环，严格说可以按 `networkSecurityConfig` 只放行 127.0.0.1；当前全开 cleartext 是宽松写法。
+- **具体改法**：加一个 `networkSecurityConfig` 允许 cleartext 仅 `127.0.0.1`；组件导出面维持现状即可，补一条注释说明"仅 launcher 入口"。
+
+### 5.8 供应链：android.jar 下载无校验
+
+- **问题（`setup.sh` 下载 android.jar，未做 checksum/签名校验；`build_apk.sh:163-177` 只按路径找文件）**。具体下载行见 `setup.sh` 平台段（本轮未逐行复核 URL，未验证是否锁版本/锁哈希）。
+- **为什么是问题**：工具链 jar 被换包会直接进编译产物；单人项目被投毒概率低，但属于可低成本收紧的点。
+- **具体改法**：下载后比对预期 SHA-256（写进脚本或 toolchain.env），不一致就 fail。
+
+---
+
+## 6. 构建脚本质量
+
+### 6.1 只 `set -u` 没有 `set -e`，靠逐条 `|| fail` 兜底
+
+- **问题（`build_apk.sh:24`）**：脚本没开 `set -e`，每个外部命令都要手写 `|| fail`；漏写的命令失败就继续往下走。当前关键编译步骤都有兜底（225/235/245/277/297/307/310/365/380），但这种模式加新步骤时很容易漏。
+- **为什么是问题**：shell 脚本里漏一个 `|| fail` 的代价是半成品 APK 被签名、被标 success。
+- **具体改法**：保持现状可以接受，但建议在文件头加 `set -u -o pipefail`，并把"未显式判失败的命令"在 code review 清单里列一条；不要贸然全量 `set -e`（脚本里有意容忍的降级分支较多，全开会把 zipalign 这类降级也搞挂）。
+
+### 6.2 status.json 字符串字段未做 JSON 转义
+
+- **问题（`build_apk.sh:60-71`）**：`write_status` 把 `$apk`、`$reason` 直接拼进 JSON 字符串，没有转义 `"`、`\`、换行。`reason` 来自 `fail()` 的 `$*`（73-79），可能带路径与异常文本；`apk` 是绝对路径。
+- **为什么是问题**：路径或理由里出现引号/反斜杠/换行，`status.json` 直接变成非法 JSON；Java 侧 `new JSONObject(status)` 解析失败（见 4.6），前端退回到 prepared 态，失败理由彻底看不到。
+- **具体改法**：脚本里写一个最小 `json_escape()`（转义 `\`、`"`、换行、回车），拼字段前过一遍；或 Java 侧 `apiBuildState` 解析失败时把原始文本当纯文本 reason 透出。
+
+### 6.3 同名应用名互相覆盖产物 APK
+
+- **问题（`build_apk.sh:368-371`）**：`FINAL_APK="$OUT/$SAFE_NAME.apk"`，`SAFE_NAME` 由 `APP_NAME` 清洗而来；两个不同工程用了相同显示名，第二次构建直接 `rm -f` 掉前一个产物。
+- **为什么是问题**：普通创作者改个标题重复打包，旧包被新包顶掉，想对比两个版本时找不到旧的。
+- **具体改法**：产物名加包名尾缀或构建 id（`$SAFE_NAME-$PKG.$BUILDID.apk`），或至少在 out 下按包名建子目录。
+
+### 6.4 部分失败不留回滚，中间产物长期堆积
+
+- **问题**：`fail()` 直接 `exit 1`（78-79），没有 `trap` 清理 `TMPROOT/work`（49-54）；共享存储侧的 `build/<buildId>/` 目录也没有过期清理。
+- **为什么是问题**：低配机反复试构建，Termux 私有 tmp 与共享存储 build 目录双向堆积；脚本注释里自己也写了 FUSE 写小文件会卡（46-48），残留多了下次构建更慢。
+- **具体改法**：加 `trap 'rm -rf "$WORK"' EXIT`（成功可保留 work 供排查，失败才清）；Java 侧在 `apiDeleteProject` 或启动时清理超过 N 天的 `build/` 旧目录。
+
+### 6.5 并发重入无锁（同 2.4，脚本侧落点）
+
+- **问题**：无 `flock`、无 pid 文件；同一 `HERE` 两次 RUN_COMMAND 并行，`$WORK`、`$LOG`、`$STATUS` 共享。
+- **具体改法**：`exec 9>"$HERE/.build.lock"; flock -n 9 || fail("另一个构建正在跑，等它结束再来")`。
+
+### 6.6 签名参数与版本参数校验不足
+
+- **问题**：
+  - `VERSION_CODE` 不校验是否为正整数（`build_apk.sh:108`、`BuildKit.java:145` 直接字符串替换进清单）；
+  - `SIGMODE=new` 时同名 keystore 已存在就直接复用（350-352），不校验别名/口令是否匹配现有库，等到 apksigner 才报一个笼统"口令错了？"；
+  - `KS_ALIAS` / 口令含特殊字符时走 `pass:` 命令行（375-376），未做额外防护；
+  - d8 类列表 `$(find ...)` 未加引号（289），类路径含空格会断（当前包名是 ASCII，暂未触发）。
+- **为什么是问题**：参数校验缺位时，报错点离真正出错的位置很远，用户看不懂。
+- **具体改法**：脚本开头校验 `VERSION_CODE` 为纯数字且 ≥1；`new` 模式复用已有库前先 `keytool -list` 验别名与口令；d8/dx 的类列表改用 `@argfile`（javac 已经这么做了，264）。
+
+### 6.7 setup.sh 依赖安装与资源落地
+
+- **问题**：`setup.sh` 逐个 `pkg install` 包，失败分支与 `tools.sh` 复刻有重复行（123-126 附近两行相同的 chmod/ok，未逐一复核行号，建议自查）；android.jar 下载来源未锁哈希（见 5.8）。
+- **具体改法**：合并重复行；安装失败把缺的包名写进探针结果，而不是留到构建时才报"javac 不在"。
+
+---
+
+## 7. 状态与持久化
+
+### 7.1 SP 整包 JSON 写入用 `apply()`，无原子替换
+
+- **问题（`Store.java:112-118`）**：整份工程清单序列化成一个 JSON 字符串 `apply()` 异步写；`add/remove/setLastVersionCode` 每次全量重写。
+- **为什么是问题**：`apply` 进程被杀时可能未落盘；全量重写意味着一次中途写坏就是整份清单损坏（叠加 4.5）。对工程数量不大的单人项目，风险可控，但缺一个"先写临时键再替换"的保险。
+- **具体改法**：不一定要换数据库；先做 4.5 的备份 + 重建兜底，成本最低。真要加固，写入走 `commit()` 或临时键 + 原子替换。
+
+### 7.2 存储结构无版本号，升级兼容靠 `optXxx` 默认值
+
+- **问题（`Store.Project.fromJson`，`Store.java:57-71`）**：JSON 里没有 schema 版本字段；新字段全靠 `optInt/optString` 默认值，老数据读新代码没问题，新数据读老代码会静默丢字段。
+- **为什么是问题**：以后工程清单要加字段（比如封面图、标签），没有版本号就没法做迁移判断。
+- **具体改法**：清单 JSON 顶层加 `"schema": 1`；`fromJson` 读到旧版本号时走一次显式迁移函数，而不是静默默认。
+
+### 7.3 默认版本号前后端口径不一致
+
+- **问题**：Java 侧 `BuildKit.Options.versionCode` 默认 `V.CODE`（`BuildKit.java:49`、`StationActivity.java:1071`），前端兜底是 `2601`（`app.js:543、598、610`，`index.html:128`）；`versionName` Java 默认 `V.NAME`，前端兜底 `1.1.5-beta`。
+- **为什么是问题**：桥异常/前端没拿到 env 时，两边各用各的默认号，打出的游戏包 versionCode 可能撞上工作站自己的号段（26180000+）。
+- **具体改法**：默认值只留一处——由 `apiOnboard`/`apiEnv` 下发 `versionBase` 与起始 code，前端不写死 `2601`；Java 默认值与前端兜底取同一个常量。
+
+### 7.4 偏好草稿单键存储，无结构校验
+
+- **问题（`StationActivity.java:1428-1436`）**：整个表单草稿塞在 `form` 一个 JSON 键里；读取后前端直接回填（`app.js:598-610`），坏字段没有逐键校验。
+- **具体改法**：和 7.2 一起加 schema 版本；读回时逐键校验类型，坏键回默认。
+
+---
+
+## 8. 前后端契约
+
+### 8.1 断线事件：Java 发 `termuxInstall`，前端没有对应 case
+
+- **问题**：Java 在 Termux 安装结果回调里 `emit("termuxInstall", o)`（`StationActivity.java:550`）；前端事件分发 switch（`app.js:1340-1414`）覆盖了 `ready/importStart/imported/progress/prepared/error/install/buildSent/buildDenied/icon/keystore/probeSent`，**唯独没有 `termuxInstall`**。
+- **为什么是问题**：用户点「安装 Termux」后，系统安装器的成功/失败结果前端收不到，界面停在"正在交给系统安装器"（`app.js:1170-1171`），装好没装好全靠用户自己回桌面看图标。这正是 PITFALLS 32/33 记过的"静默失败"在安装结果链路上的复发。README 298 也写明这条一键安装路径还没有真机装机数据——上线即踩。
+- **具体改法**：`app.js` switch 补 `case 'termuxInstall': toast(data.message, !data.ok); refreshEnv(); refreshOnboard(); break;`，一处改动。
+
+### 8.2 桥方法与前端调用基本一一对应，三个方法无人调用
+
+- **问题**：`Api.java` 35 个桥方法中，`exitPreview`、`toggleOrientation`、`version` 前端未调用（见 1.2）。其余方法前端均有对应 `call(...)`。
+- **具体改法**：见 1.2，删或挂回前端。
+
+### 8.3 事件/字段结构不统一的几处
+
+- **问题**：
+  - 同步桥返回 `{ok:1,...}` / `{ok:0,message}`，异步结果走 emit；但 `apiReadText` 在 IO 失败时仍回 `ok:1`（4.2），结构与约定不符；
+  - `probeSent` 前端 case 为空（`app.js:1411-1412`），探针结果靠 2 秒轮询 `readProbe`（844-853），事件本身没带信息；
+  - `apiEnv` 不下发 `versionBase`，`versionBase` 只在 `apiOnboard`（`StationActivity.java:487`）给；若体检弹层被跳过，前端表单兜底只能用写死字符串（`app.js:542、598`）。
+- **具体改法**：统一"失败必须 `ok:0` + `message`"；`versionBase/versionNameBase` 挪到 `apiEnv` 一起下发；`probeSent` 要么带初始状态，要么前端不订阅。
+
+### 8.4 前端轮询无退避，探针轮询次数硬编码
+
+- **问题（`app.js:754` 1.2 秒固定间隔；`844-853` 探针 2 秒 × 10 次）**：构建期间持续高频桥调用 + 文件读取；切后台后 `visibilitychange` 回来又触发一次 `pollBuild`（1471-1475）。
+- **为什么是问题**：低配机上轮询本身占 CPU；阈值 10 次写死，慢设备探针还没回写就判失败。
+- **具体改法**：轮询间隔按状态拉长（prepared 3s、running 1.2s、stalled 5s）；探针次数改成与超时挂钩（比如总时长 60 秒），而不是固定 10 次。
+
+---
+
+## 9. 可测性与可维护性
+
+### 9.1 几乎没有自动化测试，只有一个 shell 桩自检
+
+- **问题**：`tools/test/run-selftest.sh` 用桩程序覆盖 `build_apk.sh` 降级分支；Java 侧无单测，前端无测试。核心逻辑（包名生成、版本号换算、清单校验、路径校验）都在静态方法里，没有可注入的接口。
+- **为什么是问题**：单人手机调试为主，改版本号规则、改包名后缀这种纯逻辑，每次都要打包装真机验，成本高；PITFALLS 38 那种"换算基数写错"的回归就是这么来的。
+- **具体改法**：先把纯函数挪出来可测：`Util.validPackage/slugify/human`、版本号换算（`StationActivity.java:1021-1032`）抽成静态工具类，写 JVM 单测（不依赖 Android 框架的部分）；shell 自检保留并补"status.json 字段转义"一条断言。
+
+### 9.2 日志分级粗，无失败上报通道
+
+- **问题**：Tag 统一 `WGStation`（`Util.java:26`），`Log.i/d/w/e` 混用；失败路径要么 `Log.w` 要么直接吞（4.8）。界面上用户能看到的只有 toast 与 build.log，logcat 普通创作者取不到。
+- **为什么是问题**：用户反馈问题时给不出现场；作者远程排查只能靠对方复述。
+- **具体改法**：关键失败点统一 `Log.w(TAG, "stage: " + msg, e)`；前端"复制日志"按钮（`app.js:716-720`）目前只复制 build.log，把 `reason`、工程 id、版本号、SDK 拼进导出文本，方便反馈时一并拷走。
+
+### 9.3 硬编码常量与魔法字符串散落
+
+- **问题（举例）**：
+  - 路径：`Download/WebGALStation`（`StationActivity.java:261`）、Termux home（`Termux.java:33`）；
+  - 版本阈值：`2601`、`26180000`（`StationActivity.java:1021、1030`）；
+  - 常量：pref 长度 4096（1433）、日志尾部 6000（1157）、看门狗 25 秒（`app.js:780`）、轮询 1.2 秒（754）、探针 10 次（851）；
+  - 字符串：签名模式 `"debug"/"custom"/"new"`、方向 `"landscape/portrait/auto"`、来源 `"import"/"tutorial"`。
+- **具体改法**：阈值类收成一个 `Config` 常量类（Java）/ `S` 配置段（JS）；版本号段常量挂到 `V.java`（`V.TAG` 已经有了，阈值直接引用它），别在业务代码里写裸数字。
+
+### 9.4 类内两语句挤一行，影响排障
+
+- **问题（`StationActivity.java:1071`）**：`opt.versionCode = ...; opt.orientation = ...;` 两条语句同一行；`apiOpenTermux`（1395）方法体开括号挤在行尾。
+- **具体改法**：格式化拆开，无逻辑风险，纯属下次定位行号不坑自己。
+
+---
+
+## 10. 工程卫生
+
+### 10.1 版本号：源码四处一致，残留旧名散在文案/注释/随包免责声明里
+
+- **现状核对**：`VERSION.json` build 17、`V.java:10-12/19`、`AndroidManifest.xml:5-6`、`README.md:7/50-51` 四处互相对得上（`.17 / 26180017`）。
+- **问题（残留旧名）**：
+  - `src/assets/legal/DISCLAIMER.txt:3` 仍写 `版本 1.0.0-beta.2601`——**这个文件随 APK 分发给用户看**，不是内部文档；
+  - `docs/PITFALLS.md:1` 标题、`:154` 仍按 2601 旧号段叙述；`:321` 阈值写 `26010000`，代码实际是 `2601` 与 `26180000` 两套判断（`StationActivity.java:1021/1030`）；
+  - `tools/pc/version.ps1:12-13`、`tools/pc/build-station.ps1:34` 注释示例仍写 `.16`；
+  - `app.js:35` 默认 `version: '1.0.0'`；`index.html:22/124/128` 占位 `1.1.5-beta` / `2601`；
+  - `docs/ARCHITECTURE.md:206` 示例产物名仍写 `1.0.0.apk`；`docs/LOW-END-TEST.md:13-14` 样本名仍是 1.0.0。
+- **为什么是问题**：PITFALLS 38/39 刚踩过"版本名前缀一动不动像没迭代"的坑，随包文案里挂旧号等于把同一个坑再踩一遍；文档阈值与代码不符，下次改规则会被文档带偏。
+- **具体改法**：免责声明版本号改由构建时注入（与 README-build 同机制）；PITFALLS 旧号段历史描述保留，但标注"旧方案，现行规则见 V.java"；注释示例跟着 version.ps1 生成；前端兜底号去掉写死的 2601（见 7.3）。
+
+### 10.2 模板双份：根 `templates/` 与 `src/assets/templates/` 靠 PC 脚本同步
+
+- **问题**：根 `templates/game/` 与 `src/assets/templates/game/` 当前内容一致（本轮逐文件比对无差异），同步逻辑在 `tools/pc/build-station.ps1:57-69`；`templates/common/LocalServer.java` 只存在于 assets 侧。
+- **为什么是问题**：不用 PC 脚本同步、直接改 assets 那份时，根模板会悄悄漂移；ARCHITECTURE 82-83 写明"templates 是唯一来源"，但端上 `BuildKit` 读的是 assets 副本，两边口径依赖人肉记得跑同步。
+- **具体改法**：二选一——要么把根 `templates/` 删掉、assets 作为唯一来源并改文档；要么加一条启动/自检脚本比对两份哈希，不一致直接报错。
+
+### 10.3 构建产物与旧包是否被跟踪：快照内无 `.git`，无法判定，目录里确实堆了大量产物
+
+- **问题**：`dist/` 现存 40+ 个历史 APK/idsig（含 2601 系、`.2618.16`、`.17`）和一个 `WebGAL低配测试包.zip`；`build/` 下有 pulled 工程、ui-check 副本、截图、`debug.keystore`。`.gitignore` 忽略了 `build/`、`dist/*.apk`、`dist/*.idsig`、`*.keystore`，**但 `dist/*.zip` 不在忽略规则内**。
+- **为什么是问题**：本快照目录下没有 `.git`（已确认 `Test-Path .git` 为否），是否误跟踪**未验证**；但 zip 不被忽略，下次有仓库时很容易把测试包提交进去。
+- **具体改法**：`.gitignore` 补 `dist/*.zip`；确认 `build/debug.keystore` 不被任何规则漏出；旧样本包定期清出 `dist/`，只留当前版本。
+
+### 10.4 许可声明与实际产物基本对齐，一处待核
+
+- **现状**：`THIRD-PARTY-NOTICES.md` 列 WebGAL 4.6.4 MPL-2.0、Termux GPL-3.0（不随附）、Build-Tools Apache-2.0、OpenJDK、android.jar、BuildAPKs 仅参考；`LICENSES/` 四个全文齐全；engine 目录 `.gz` 数量为 0，与 NOTICE"只删 gz 副本"的声明一致。
+- **待核**：THIRD-PARTY 写 Termux `0.118.3`、Build-Tools `36.1.0`，README/LOW-END-TEST 记的是 F-Droid 1002 与实测工具链；版本数字与真机当前装的版本是否仍一致，本轮未验证（不随附二进制，影响小）。
+
+### 10.5 引擎静态资源体积
+
+- **现状**：`src/assets/engine/` 约 37.9 MB（未逐文件读，符合 README 27.3 MB 全量 + 字体的量级描述）；缓存策略由 LocalServer 统一 `no-store`（`LocalServer.java:484`），换端口换 origin，设计自洽。体积治理不在本轮代码结论内，仅记录。
+
+---
+
+## 最值得先修的 5 条（按 ROI 排序：风险/收益 ÷ 改动成本）
+
+| 排序 | 问题 | 位置 | 为什么排这里 | 改动成本 | 标记 |
+|---|---|---|---|---|---|
+| 1 | **编辑器写剧本不看写盘结果，失败也回"成功"** | `StationActivity.java:879-880`（`Util.writeText` 布尔值被忽略，`Util.java:77-94`） | 直接丢创作者的稿子，且用户无感知；产品定位就是给不会编程的人写稿，后果最重 | 极小：判一下布尔值，失败回 `errJson`，前端 toast 标红 | **⚠ 现在不改，下个版本一定炸**（写稿丢数据是核心链路） |
+| 2 | **Termux 安装结果事件前端断线**：Java 发 `termuxInstall`，switch 无此 case | 发：`StationActivity.java:550`；收：`app.js:1340-1414`（缺 case） | 首启链路一键装 Termux 的成败用户看不见；README 298 已注明这条路径无机数据，属于未验证就上线的雷，PITFALLS 32/33 同类复发 | 极小：前端补一个 case + 刷新环境态 | **⚠ 现在不改，下个版本一定炸**（新用户首启必走这条） |
+| 3 | **`buildId` / 安装 APK 路径桥未做 canonical 校验** | `StationActivity.java:1149、1193、1256、1241` | 桥暴露面里唯一漏做路径校验的入口；复用 837-852 已有校验函数即可，安全收益明确 | 小：抽一个 `resolveBuildDir`，三处入口 + install 路径各过一遍 | — |
+| 4 | **工程清单损坏即清空、无备份无重建** | `Store.java:102-109` | 一次 SP 写坏，用户工程库全空且磁盘文件还在，普通用户救不回来；低频但致命 | 小：解析失败先备份原始串，启动时提示从 `projects/` 目录重建 | — |
+| 5 | **WebView 调试口 release 常开** | `StationActivity.java:100` | 正式分发包留调试附加面；一行门控的事，README 自己都标了待关 | 极小：按 `FLAG_DEBUGGABLE` / BuildConfig.DEBUG 包一层 | — |
+
+**没进 Top5 但下一轮建议顺手带上的**：Installer 静态接收器泄漏（`Installer.java:59/107-143`）、构建重入无锁（`StationActivity.java:1190` + `build_apk.sh:49`）、status.json 未转义（`build_apk.sh:60-71`）、parseOptions 坏 JSON 静默落默认（`StationActivity.java:1107-1109`）、随包免责声明残留旧版本号（`src/assets/legal/DISCLAIMER.txt:3`）。
+
+---
+
+## 附：未验证 / 本轮未触及清单
+
+- 本快照无 `.git` 目录，"产物是否被误跟踪"只能依据 `.gitignore` 推断，未做 VCS 状态核实（10.3）。
+- 未执行 `build_apk.sh` / `setup.sh` / `probe.sh` / 任何 gradle、adb、安装命令；脚本运行时行为、Termux 各版本 Intent 兼容性、ROM 差异均未在本轮实测，相关判断标注了"未验证"。
+- `src/assets/engine/` 静态资源（含 1.4 MB 级 js）未逐行读，仅核对体积与 gz 残留。
+- PC 侧 `tools/pc/*.ps1` 只核对了版本号生成与模板同步逻辑，未逐行评审。
+- `LocalServer.percentDecode` 对非 ASCII 百分号编码路径的解码行为（`LocalServer.java:590-606`）未构造用例实测。
+- `Installer` 在 targetSdk 34 下两参 `registerReceiver` 的兼容路径（`Installer.java:141`，<33 分支）未在对应系统版本验证。

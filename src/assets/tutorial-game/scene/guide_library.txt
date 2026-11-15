@@ -1,0 +1,18 @@
+changeBg:bg.webp -next;
+changeFigure:stand.webp -left -next;
+:左栏是工程库，卡片上写着场景数、文件数、体积——那都是真读盘算出来的，不是估算。;
+:卡片上三个按钮：预览、去打包、删除。删的是工作站自己库里的副本，不会动你原始目录。;
+:顶上那排：新建项目、导入、刷新。;
+changeFigure:stand2.webp -right -next;
+:新建项目会给你搭好 config.txt、scene/start.txt，还有背景、立绘、音乐、动画四个空目录。;
+:建完自动进预览，你什么都不用点，直接开始写。;
+:导入是把外面已经有的 WebGAL 工程整份复制进来，含 game 目录就能选。;
+changeFigure: -left -next;
+:中间的舞台就是引擎本体。它跑在内嵌窗口里，不占你的整个屏幕，你随时能切回工作台改东西。;
+:改完剧本存盘，回来点「重载」，就是新内容，不用重启应用。;
+changeFigure:stand.webp -left -next;
+:再往下一层：点顶栏「工作场景」，左边列场景文件，右边直接编辑 txt。;
+:旁白、角色台词、换背景、跳场景、音乐、变量，都有快捷插入。;
+:保存就是真写盘，日志里能看到路径，骗不了人。;
+changeFigure: -left -next;
+choose:去看怎么打包:guide_pack.txt|回到开头:start.txt;

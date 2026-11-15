@@ -1,0 +1,17 @@
+bgm:s_Title.mp3 -volume=60 -enter=2500;
+unlockBgm:s_Title.mp3 -name:云端来信;
+changeBg:WebGalEnter.webp -next;
+intro:WEBGAL 移动工作站|把视觉小说引擎揣进兜里的那种;
+:欢迎来到 WebGAL 移动工作站。;
+changeBg:bg.webp -next;
+setTransition: -target=bg-main -enter=shockwaveIn -next;
+changeFigure:stand.webp -left -next;
+:这台工作站不是套壳浏览器，它自带一个本地 HTTP 服务。;
+:引擎 4.6.4 跑在 WebView 里，剧本、立绘、音频全部从你选的工程目录实时读取。;
+changeFigure:stand2.webp -right -next;
+:所以你改完 .txt 存盘，切回来看就是新内容，不用重新导出。;
+setVar:channel=Termux + BuildAPKs;
+:打包走 {channel}，端上直出 APK。;
+changeFigure: -left -next;
+changeFigure: -right -next;
+choose:看看打包台怎么玩:pipeline.txt|先试试引擎能力:engine_show.txt;

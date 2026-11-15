@@ -1,0 +1,18 @@
+changeBg:bg.webp -next;
+changeFigure:stand.webp -left -next;
+:右栏是打包台。填应用名、包名、版本名、图标，选横屏还是竖屏，然后点「生成构建工程」。;
+:这一步会把引擎、你的剧本、素材、许可文件、安卓模板，一次性拼成一份完整安卓工程。;
+:接着点「开始构建」，Termux 接手：aapt2 打资源、javac 编译、d8 出 dex、zipalign 对齐、apksigner 签名。;
+changeFigure:stand2.webp -right -next;
+:第一次会弹「允许执行命令」，点允许就自动开跑，二十来秒出包。;
+:版本号不用你手改，同一个工程再打一次，内码和外名一起往上走，不会被系统当「相同版本」拦。;
+:签名三选一：内置调试（只适合自测）、你自己的 keystore、现场新建一个 keystore。;
+changeFigure: -left -next;
+:要是 Termux 没反应，二十五秒后界面会自己说「Termux 没回话」。;
+:点「打开 Termux」把它拉到前台，再点一次「开始构建」，基本就动了。;
+:国产系统会把后台应用冻住，这不是你的错，是它的省电策略。;
+changeFigure:stand.webp -left -next;
+:产物落在 Download/WebGALStation/build/<任务>/out，点「安装」直接装回这台手机。;
+:装完打开就是你的游戏，左下角有一枚来路角标——那是分层的许可说明，别删。;
+changeFigure: -left -next;
+choose:再看一遍工程库:guide_library.txt|回到开头:start.txt;
